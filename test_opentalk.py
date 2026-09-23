@@ -11,7 +11,7 @@ import urllib.error
 import urllib.request
 import wave
 
-import sprechschrift as app
+import opentalk as app
 
 
 def sample_wav():
@@ -26,7 +26,7 @@ def sample_wav():
 
 class PipelineTests(unittest.TestCase):
     def test_hyprland_types_unicode_through_wtype_stdin(self):
-        with patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "Hyprland", "SPRECHSCHRIFT_INSERT": "auto"}), \
+        with patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "Hyprland", "OPENTALK_INSERT": "auto"}), \
              patch.object(app.shutil, "which", side_effect=lambda name: "/bin/" + name), \
              patch.object(app.subprocess, "run") as run, patch.object(app, "inform"):
             app.insert_text("Grüß dich")
@@ -34,7 +34,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["input"], "Grüß dich".encode("utf-8"))
 
     def test_auto_falls_back_to_clipboard(self):
-        with patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "Hyprland", "SPRECHSCHRIFT_INSERT": "auto"}), \
+        with patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "Hyprland", "OPENTALK_INSERT": "auto"}), \
              patch.object(app.shutil, "which", side_effect=lambda name: "/bin/" + name), \
              patch.object(app.subprocess, "run", side_effect=[app.subprocess.CalledProcessError(1, "wtype"),
                                                                app.subprocess.CalledProcessError(1, "kwtype"),
@@ -98,8 +98,8 @@ class PipelineTests(unittest.TestCase):
             binary.write_text("#!/usr/bin/env python3\nimport pathlib, sys\n"
                               "pathlib.Path(sys.argv[sys.argv.index('-of')+1] + '.txt').write_text('Grüß dich!\\n', encoding='utf-8')\n")
             binary.chmod(0o755)
-            with patch.dict(os.environ, {"SPRECHSCHRIFT_MODEL": str(path / "model.bin"),
-                                        "SPRECHSCHRIFT_WHISPER_CLI": str(binary)}):
+            with patch.dict(os.environ, {"OPENTALK_MODEL": str(path / "model.bin"),
+                                        "OPENTALK_WHISPER_CLI": str(binary)}):
                 self.assertEqual(app.transcribe(sample_wav()), "Grüß dich!")
 
     def test_server_auth_and_wav_handling(self):

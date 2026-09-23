@@ -28,17 +28,17 @@ def runtime_socket() -> Path:
     base = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
     if not base.is_dir() or base.stat().st_uid != os.getuid():
         raise RuntimeError("Kein privates XDG_RUNTIME_DIR gefunden. Bitte in einer Desktop-Sitzung starten.")
-    return base / "sprechschrift.sock"
+    return base / "opentalk.sock"
 
 
 def config(name: str, default: str = "") -> str:
-    return os.environ.get("SPRECHSCHRIFT_" + name, default)
+    return os.environ.get("OPENTALK_" + name, default)
 
 
 def inform(message: str) -> None:
     print(message, flush=True)
     if shutil.which("notify-send") and os.environ.get("DISPLAY", os.environ.get("WAYLAND_DISPLAY")):
-        subprocess.run(["notify-send", "Sprechschrift", message], capture_output=True, timeout=4, check=False)
+        subprocess.run(["notify-send", "OpenTalk", message], capture_output=True, timeout=4, check=False)
 
 
 def validate_wav(data: bytes) -> None:
@@ -60,11 +60,11 @@ def validate_wav(data: bytes) -> None:
 def transcribe_local(data: bytes) -> str:
     model = Path(config("MODEL")).expanduser()
     if not model.is_file():
-        raise RuntimeError("Modell fehlt: SPRECHSCHRIFT_MODEL auf ggml-*.bin setzen.")
+        raise RuntimeError("Modell fehlt: OPENTALK_MODEL auf ggml-*.bin setzen.")
     cli = config("WHISPER_CLI", "whisper-cli")
     if not shutil.which(cli) and not Path(cli).is_file():
-        raise RuntimeError("whisper-cli fehlt: SPRECHSCHRIFT_WHISPER_CLI setzen.")
-    with tempfile.TemporaryDirectory(prefix="sprechschrift-") as directory:
+        raise RuntimeError("whisper-cli fehlt: OPENTALK_WHISPER_CLI setzen.")
+    with tempfile.TemporaryDirectory(prefix="opentalk-") as directory:
         wav = Path(directory) / "audio.wav"
         output = Path(directory) / "result"
         wav.write_bytes(data)
@@ -85,10 +85,10 @@ def transcribe(data: bytes) -> str:
     if not server:
         return transcribe_local(data)
     if not (server.startswith("https://") or server.startswith("http://")):
-        raise RuntimeError("SPRECHSCHRIFT_SERVER_URL braucht http:// oder https://.")
+        raise RuntimeError("OPENTALK_SERVER_URL braucht http:// oder https://.")
     token = config("TOKEN")
     if not token:
-        raise RuntimeError("Für den Homeserver SPRECHSCHRIFT_TOKEN setzen.")
+        raise RuntimeError("Für den Homeserver OPENTALK_TOKEN setzen.")
     request = urllib.request.Request(server + "/transcribe", data=data, method="POST",
                                      headers={"Authorization": "Bearer " + token,
                                               "Content-Type": "audio/wav"})
@@ -156,7 +156,7 @@ class Dictation:
                 self.recorder = self.audio_path = self.temp = None
                 threading.Thread(target=self.finish, args=(recorder, audio_path, temp), daemon=True).start()
                 return "Aufnahme beendet. Erkenne Text …"
-            self.temp = tempfile.TemporaryDirectory(prefix="sprechschrift-")
+            self.temp = tempfile.TemporaryDirectory(prefix="opentalk-")
             self.audio_path = Path(self.temp.name) / "audio.wav"
             command = ["pw-record", "--rate", "16000", "--channels", "1", "--format", "s16",
                        str(self.audio_path)]
@@ -216,11 +216,11 @@ def send_command(command: str) -> str:
 def run_daemon():
     import fcntl
     path = runtime_socket()
-    with (path.parent / "sprechschrift.lock").open("w") as lockfile:
+    with (path.parent / "opentalk.lock").open("w") as lockfile:
         try:
             fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise RuntimeError("Sprechschrift läuft schon.") from exc
+            raise RuntimeError("OpenTalk läuft schon.") from exc
         path.unlink(missing_ok=True)
         engine = Dictation()
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
@@ -259,7 +259,7 @@ def toggle():
             return
         except (ConnectionError, FileNotFoundError, TimeoutError):
             continue
-    raise RuntimeError("Hintergrunddienst startet nicht. `python sprechschrift.py daemon` im Terminal prüfen.")
+    raise RuntimeError("Hintergrunddienst startet nicht. `python opentalk.py daemon` im Terminal prüfen.")
 
 
 def make_handler(token: str):
@@ -320,11 +320,11 @@ def main():
         elif args.command == "serve":
             token = config("TOKEN")
             if len(token) < 24:
-                raise RuntimeError("SPRECHSCHRIFT_TOKEN muss mindestens 24 Zeichen lang sein.")
+                raise RuntimeError("OPENTALK_TOKEN muss mindestens 24 Zeichen lang sein.")
             if not Path(config("MODEL")).expanduser().is_file():
-                raise RuntimeError("SPRECHSCHRIFT_MODEL auf eine vorhandene Modelldatei setzen.")
+                raise RuntimeError("OPENTALK_MODEL auf eine vorhandene Modelldatei setzen.")
             with HTTPServer((args.host, args.port), make_handler(token)) as server:
-                print(f"Sprechschrift hört auf {args.host}:{args.port}", flush=True)
+                print(f"OpenTalk hört auf {args.host}:{args.port}", flush=True)
                 server.serve_forever()
     except (RuntimeError, OSError) as exc:
         print("Fehler:", exc, file=sys.stderr)

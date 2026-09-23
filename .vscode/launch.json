@@ -5,26 +5,26 @@
       "name": "Desktop-Dienst debuggen",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/sprechschrift.py",
+      "program": "${workspaceFolder}/opentalk.py",
       "args": ["daemon"],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
       "env": {
-        "SPRECHSCHRIFT_MODEL": "${env:HOME}/whisper.cpp/models/ggml-small.bin",
-        "SPRECHSCHRIFT_WHISPER_CLI": "${env:HOME}/whisper.cpp/build/bin/whisper-cli"
+        "OPENTALK_MODEL": "${env:HOME}/whisper.cpp/models/ggml-small.bin",
+        "OPENTALK_WHISPER_CLI": "${env:HOME}/whisper.cpp/build/bin/whisper-cli"
       }
     },
     {
       "name": "Server debuggen",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/sprechschrift.py",
+      "program": "${workspaceFolder}/opentalk.py",
       "args": ["serve"],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
       "env": {
-        "SPRECHSCHRIFT_MODEL": "${env:HOME}/whisper.cpp/models/ggml-small.bin",
-        "SPRECHSCHRIFT_WHISPER_CLI": "${env:HOME}/whisper.cpp/build/bin/whisper-cli"
+        "OPENTALK_MODEL": "${env:HOME}/whisper.cpp/models/ggml-small.bin",
+        "OPENTALK_WHISPER_CLI": "${env:HOME}/whisper.cpp/build/bin/whisper-cli"
       }
     }
   ]
