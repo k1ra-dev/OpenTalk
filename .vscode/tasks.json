@@ -1,0 +1,19 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Tests ausführen",
+      "type": "shell",
+      "command": "python3 -m unittest discover -s . -p 'test_*.py' -v",
+      "options": {"cwd": "${workspaceFolder}"},
+      "group": {"kind": "test", "isDefault": true},
+      "problemMatcher": []
+    },
+    {
+      "label": "Spracheingabe umschalten",
+      "type": "shell",
+      "command": "${workspaceFolder}/scripts/start.sh",
+      "problemMatcher": []
+    }
+  ]
+}
