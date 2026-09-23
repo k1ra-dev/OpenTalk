@@ -118,6 +118,25 @@ class PipelineTests(unittest.TestCase):
                 os.environ.pop("OPENTALK_SOURCE", None)
                 self.assertEqual(app.Dictation().source, "mic.saved")
 
+    def test_model_selection_and_custom_override(self):
+        with tempfile.TemporaryDirectory() as folder, \
+             patch.dict(os.environ, {"XDG_CONFIG_HOME": folder, "XDG_DATA_HOME": folder}, clear=False):
+            settings = app.settings_path()
+            settings.parent.mkdir(parents=True)
+            settings.write_text('{"model": "base", "source": "mic.saved"}', encoding="utf-8")
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("OPENTALK_MODEL", None)
+                self.assertEqual(app.selected_model(), "base")
+                self.assertEqual(app.model_path(), app.model_file("base"))
+                app.model_file("base").parent.mkdir(parents=True)
+                with app.model_file("base").open("wb") as model:
+                    model.truncate(app.MODEL_MIN_BYTES["base"])
+                self.assertTrue(app.model_available("base"))
+                settings.write_text('{"model": "unknown"}', encoding="utf-8")
+                self.assertEqual(app.selected_model(), "small")
+            with patch.dict(os.environ, {"OPENTALK_MODEL": "/tmp/custom-whisper.bin"}):
+                self.assertEqual(app.model_path(), Path("/tmp/custom-whisper.bin"))
+
     def test_wav_rejects_wrong_rate_and_oversize(self):
         app.validate_wav(sample_wav())
         with self.assertRaises(ValueError):

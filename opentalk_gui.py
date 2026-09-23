@@ -16,8 +16,9 @@ import fcntl
 from PyQt6 import sip
 from PyQt6.QtCore import QPoint, QProcess, QRect, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QCursor, QPainter, QPen
-from PyQt6.QtWidgets import (QApplication, QDialog, QLabel, QMenu, QPushButton,
-                             QPlainTextEdit, QToolTip, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel, QMenu,
+                             QPushButton, QPlainTextEdit, QSlider, QToolTip,
+                             QVBoxLayout, QWidget)
 
 import audio_sources
 from live_dictation import LiveDictation
@@ -157,56 +158,189 @@ def insert_into_target(value: str, target: str) -> str:
 
 
 class SetupDialog(QDialog):
+    MODEL_LABELS = ("Tiny", "Base", "Small", "Medium", "Large v3")
+    MODEL_SIZES = ("75 MiB", "142 MiB", "466 MiB", "1,5 GiB", "2,9 GiB")
+
     def __init__(self, parent: QWidget):
         super().__init__(parent)
-        self.setWindowTitle("OpenTalk einrichten")
-        self.resize(460, 300)
+        self.setWindowTitle("OpenTalk Einstellungen")
+        self.resize(520, 390)
+        self.setStyleSheet("""
+            QDialog { background-color: #17212d; }
+            QLabel { color: #edf3fa; }
+            QLabel#heading { font-size: 17px; font-weight: 700; }
+            QLabel#muted { color: #adbdcb; }
+            QPushButton { color: #f4f7fb; background-color: #2b4053;
+                          border: 1px solid #496074; border-radius: 11px;
+                          padding: 8px 12px; font-weight: 600; }
+            QPushButton:hover { background-color: #3b5670; }
+            QPushButton:disabled { color: #8794a2; background-color: #243240; }
+            QPlainTextEdit { color: #dfebf5; background-color: #203141;
+                             border: 1px solid #496074; border-radius: 10px; }
+            QSlider::groove:horizontal { background: #3b5265; height: 6px; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #ee637c; width: 19px; margin: -7px 0;
+                                         border-radius: 9px; }
+        """)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(12)
-        layout.addWidget(QLabel("Lokale Spracherkennung"))
-        self.info = QLabel("whisper.cpp und ein mehrsprachiges small-Modell installieren.")
+        heading = QLabel("Whisper-Modell")
+        heading.setObjectName("heading")
+        layout.addWidget(heading)
+        explanation = QLabel("Nach rechts werden die Modelle genauer, aber die Erkennung dauert länger.")
+        explanation.setObjectName("muted")
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setRange(0, len(opentalk.MODEL_NAMES) - 1)
+        self.slider.setTickInterval(1)
+        self.slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.slider.setPageStep(1)
+        self.slider.setValue(opentalk.MODEL_NAMES.index(opentalk.selected_model()))
+        self.slider.valueChanged.connect(self.model_changed)
+        self.slider.sliderReleased.connect(self.activate_if_installed)
+        layout.addWidget(self.slider)
+        labels = QHBoxLayout()
+        for text in self.MODEL_LABELS:
+            label = QLabel(text)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            labels.addWidget(label, 1)
+        layout.addLayout(labels)
+
+        self.model_info = QLabel()
+        self.model_info.setWordWrap(True)
+        layout.addWidget(self.model_info)
+        self.download_button = QPushButton()
+        self.download_button.clicked.connect(self.download_model)
+        layout.addWidget(self.download_button)
+
+        self.info = QLabel()
+        self.info.setObjectName("muted")
         self.info.setWordWrap(True)
         layout.addWidget(self.info)
-        self.install_button = QPushButton("Jetzt einrichten")
+        self.install_button = QPushButton("Lokale Erkennung einrichten")
+        self.install_button.clicked.connect(self.start_install)
         layout.addWidget(self.install_button)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
+        self.log.document().setMaximumBlockCount(150)
+        self.log.setFixedHeight(86)
         layout.addWidget(self.log)
+
         self.process = QProcess(self)
         self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self.process.readyReadStandardOutput.connect(self.read_output)
         self.process.finished.connect(self.finished)
-        self.install_button.clicked.connect(self.start_install)
+        self.operation: str | None = None
+        self.model_locked = bool(opentalk.config("SERVER_URL") or opentalk.config("MODEL"))
+        self.slider.setEnabled(not self.model_locked)
+        self.refresh_model_info()
+        self.refresh_engine_info()
+
+    def chosen_model(self) -> str:
+        return opentalk.MODEL_NAMES[self.slider.value()]
+
+    def model_changed(self) -> None:
+        self.refresh_model_info()
+        if not self.slider.isSliderDown():
+            self.activate_if_installed()
+
+    def activate_if_installed(self) -> None:
+        name = self.chosen_model()
+        if self.model_locked or not opentalk.model_available(name) or self.operation:
+            return
+        if name != opentalk.selected_model():
+            try:
+                save_setting("model", name)
+            except OSError:
+                self.info.setText("Modellwahl konnte nicht gespeichert werden.")
+                return
+            self.info.setText(f"{name} ist aktiv. Die nächste Erkennung verwendet dieses Modell.")
+            self.parent().update_status()
+        self.refresh_model_info()
+
+    def refresh_model_info(self) -> None:
+        name = self.chosen_model()
+        size = self.MODEL_SIZES[self.slider.value()]
+        installed = opentalk.model_available(name)
+        active = opentalk.selected_model()
+        if self.model_locked:
+            self.model_info.setText("Ein eigener Modellpfad oder Homeserver ist konfiguriert.")
+        elif installed:
+            self.model_info.setText(f"{name} · {size} · installiert  |  Aktuell: {active}")
+        else:
+            self.model_info.setText(f"{name} · {size} · noch nicht installiert  |  Aktuell: {active}")
+        self.download_button.setText(f"{name} herunterladen ({size})" if not installed else
+                                     f"{name} ist installiert")
+        self.download_button.setEnabled(not installed and not self.model_locked and not self.operation)
+
+    def refresh_engine_info(self) -> None:
         if opentalk.config("SERVER_URL"):
-            self.info.setText("Homeserver in config.local.sh prüfen; lokale Installation ist deaktiviert.")
+            self.info.setText("Der Homeserver bestimmt das Whisper-Modell.")
+            self.install_button.setEnabled(False)
+        elif opentalk.config("MODEL"):
+            self.info.setText("OPENTALK_MODEL überschreibt die Modellwahl in der Oberfläche.")
             self.install_button.setEnabled(False)
         elif setup_problem() is None:
-            self.info.setText("Die lokale Spracherkennung ist bereits eingerichtet.")
+            self.info.setText("Die lokale Spracherkennung ist eingerichtet.")
             self.install_button.setEnabled(False)
-        elif opentalk.config("MODEL") or opentalk.config("WHISPER_CLI"):
-            self.info.setText("Eigene Modellpfade sind gesetzt. Bitte config.local.sh prüfen; die automatische Installation würde diese Pfade nicht ändern.")
-            self.install_button.setEnabled(False)
+        else:
+            self.info.setText("whisper.cpp und das Standardmodell können lokal eingerichtet werden.")
+            self.install_button.setEnabled(not self.operation)
 
     def start_install(self) -> None:
-        script = Path(__file__).resolve().parent / "scripts/setup-model.sh"
+        if self.operation:
+            return
+        self.operation = "setup"
         self.install_button.setEnabled(False)
+        self.slider.setEnabled(False)
+        self.download_button.setEnabled(False)
         self.log.clear()
         self.info.setText("Einrichtung läuft …")
+        script = Path(__file__).resolve().parent / "scripts/setup-model.sh"
         self.process.start("sh", [str(script)])
 
+    def download_model(self) -> None:
+        name = self.chosen_model()
+        if self.operation or self.model_locked or opentalk.model_available(name):
+            return
+        self.operation = name
+        self.slider.setEnabled(False)
+        self.install_button.setEnabled(False)
+        self.download_button.setEnabled(False)
+        self.log.clear()
+        self.info.setText(f"Lade {name} herunter und prüfe die Datei …")
+        script = Path(__file__).resolve().parent / "scripts/download-model.sh"
+        self.process.start("sh", [str(script), name])
+
     def read_output(self) -> None:
-        output = bytes(self.process.readAllStandardOutput()).decode(errors="replace").rstrip()
-        if output:
-            self.log.appendPlainText(output)
+        output = bytes(self.process.readAllStandardOutput()).decode(errors="replace")
+        for line in output.replace("\r", "\n").splitlines()[-10:]:
+            if line.strip():
+                self.log.appendPlainText(line.strip())
 
     def finished(self, code: int, _status) -> None:
         self.read_output()
-        if code == 0 and setup_problem() is None:
-            self.info.setText("Bereit. Dieses Fenster kann geschlossen werden.")
-        else:
-            self.info.setText("Einrichtung fehlgeschlagen. Ausgabe unten prüfen.")
-            self.install_button.setEnabled(True)
-        self.parent().update_status()
+        operation = self.operation
+        self.operation = None
+        self.slider.setEnabled(not self.model_locked)
+        if operation == "setup":
+            self.info.setText("Einrichtung abgeschlossen." if code == 0 else
+                              "Einrichtung fehlgeschlagen. Ausgabe unten prüfen.")
+        elif operation is not None:
+            if code == 0 and opentalk.model_available(operation):
+                try:
+                    save_setting("model", operation)
+                    self.info.setText(f"{operation} ist installiert und aktiv.")
+                except OSError:
+                    self.info.setText("Modell installiert, Auswahl konnte nicht gespeichert werden.")
+            else:
+                self.info.setText("Download fehlgeschlagen. Ausgabe unten prüfen.")
+        self.refresh_model_info()
+        if operation != "setup" or code == 0:
+            self.parent().update_status()
+        self.install_button.setEnabled(not self.model_locked and setup_problem() is not None)
 
 
 class Overlay(QWidget):

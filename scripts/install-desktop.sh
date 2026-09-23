@@ -11,7 +11,8 @@ mkdir -p "$app_dir/scripts" "$app_dir/build" "$applications_dir" "$icons_dir"
 cp "$project_dir/opentalk.py" "$project_dir/opentalk_gui.py" \
    "$project_dir/audio_sources.py" "$project_dir/live_dictation.py" \
    "$project_dir/layer_shell_bridge.cpp" "$app_dir/"
-cp "$project_dir/scripts/gui.sh" "$project_dir/scripts/setup-model.sh" "$app_dir/scripts/"
+cp "$project_dir/scripts/gui.sh" "$project_dir/scripts/setup-model.sh" \
+   "$project_dir/scripts/download-model.sh" "$app_dir/scripts/"
 if [ -f "$project_dir/config.local.sh" ]; then
     cp "$project_dir/config.local.sh" "$app_dir/config.local.sh"
     chmod 600 "$app_dir/config.local.sh"
@@ -19,7 +20,8 @@ fi
 if [ -f "$project_dir/build/libopentalk-layer.so" ]; then
     cp "$project_dir/build/libopentalk-layer.so" "$app_dir/build/"
 fi
-chmod +x "$app_dir/scripts/gui.sh" "$app_dir/scripts/setup-model.sh"
+chmod +x "$app_dir/scripts/gui.sh" "$app_dir/scripts/setup-model.sh" \
+    "$app_dir/scripts/download-model.sh"
 cp "$project_dir/assets/opentalk.svg" "$icons_dir/opentalk.svg"
 
 desktop_file="$applications_dir/opentalk.desktop"

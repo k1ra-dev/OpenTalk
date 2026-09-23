@@ -23,6 +23,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 MAX_SECONDS = 120
 MAX_WAV_BYTES = 16_000 * 2 * MAX_SECONDS + 4096
+MODEL_NAMES = ("tiny", "base", "small", "medium", "large-v3")
+MODEL_MIN_BYTES = {
+    "tiny": 60_000_000,
+    "base": 100_000_000,
+    "small": 400_000_000,
+    "medium": 1_300_000_000,
+    "large-v3": 2_500_000_000,
+}
 
 
 def runtime_socket() -> Path:
@@ -51,8 +59,30 @@ def saved_source() -> str:
         return ""
 
 
+def selected_model() -> str:
+    try:
+        name = json.loads(settings_path().read_text(encoding="utf-8")).get("model", "small")
+        return name if name in MODEL_NAMES else "small"
+    except (OSError, ValueError, AttributeError):
+        return "small"
+
+
+def model_file(name: str) -> Path:
+    if name not in MODEL_NAMES:
+        raise ValueError("Unbekanntes Whisper-Modell.")
+    return local_data_dir() / "whisper.cpp/models" / f"ggml-{name}.bin"
+
+
+def model_available(name: str) -> bool:
+    try:
+        return model_file(name).stat().st_size >= MODEL_MIN_BYTES[name]
+    except OSError:
+        return False
+
+
 def model_path() -> Path:
-    return Path(config("MODEL", str(local_data_dir() / "whisper.cpp/models/ggml-small.bin"))).expanduser()
+    custom = config("MODEL")
+    return Path(custom).expanduser() if custom else model_file(selected_model())
 
 
 def whisper_cli() -> str:
