@@ -12,6 +12,7 @@ import urllib.request
 import wave
 
 import opentalk as app
+import audio_sources
 
 
 def sample_wav():
@@ -42,6 +43,8 @@ class PipelineTests(unittest.TestCase):
              patch.object(app, "inform"):
             app.insert_text("Test")
         self.assertEqual(run.call_args.args[0][0], "wl-copy")
+        self.assertEqual(run.call_args.kwargs["stdout"], app.subprocess.DEVNULL)
+        self.assertEqual(run.call_args.kwargs["stderr"], app.subprocess.DEVNULL)
 
     def test_hotkey_start_stop_and_previous_timer(self):
         engine = app.Dictation()
@@ -77,6 +80,44 @@ class PipelineTests(unittest.TestCase):
             engine.recorder = None
             engine.temp.cleanup()
 
+    def test_window_can_cancel_recording(self):
+        recorder = Mock()
+        recorder.poll.return_value = None
+        with patch.object(app.subprocess, "Popen", return_value=recorder) as spawn, \
+             patch.object(app.threading, "Timer"):
+            engine = app.Dictation(on_result=Mock(), source="mic.node")
+            engine.toggle()
+            self.assertEqual(spawn.call_args.args[0][-3:-1], ["--target", "mic.node"])
+            temp_path = Path(engine.temp.name)
+            engine.cancel()
+            self.assertIn("verworfen", engine.toggle())
+        self.assertIsNone(engine.recorder)
+        self.assertFalse(temp_path.exists())
+        recorder.send_signal.assert_called_once()
+        recorder.communicate.assert_called_once()
+
+    def test_source_list_ignores_speaker_monitors_and_unplugged_inputs(self):
+        sources = [
+            {"name": "speaker.monitor", "description": "Monitor"},
+            {"name": "mic.usb", "description": "USB-Mikrofon", "monitor_source": ""},
+            {"name": "mic.unplugged", "description": "Nicht verbunden",
+             "active_port": "mic", "ports": [{"name": "mic", "availability": "not available"}]},
+        ]
+        self.assertEqual(audio_sources.parse_sources(json.dumps(sources)),
+                         [("USB-Mikrofon", "mic.usb")])
+
+    def test_saved_microphone_is_used_by_hotkey(self):
+        with tempfile.TemporaryDirectory() as folder, \
+             patch.dict(os.environ, {"XDG_CONFIG_HOME": folder}, clear=False):
+            path = app.settings_path()
+            path.parent.mkdir(parents=True)
+            path.write_text('{"source": "mic.saved"}', encoding="utf-8")
+            with patch.dict(os.environ, {"OPENTALK_SOURCE": ""}, clear=False):
+                self.assertEqual(app.Dictation().source, "")
+            with patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("OPENTALK_SOURCE", None)
+                self.assertEqual(app.Dictation().source, "mic.saved")
+
     def test_wav_rejects_wrong_rate_and_oversize(self):
         app.validate_wav(sample_wav())
         with self.assertRaises(ValueError):
@@ -89,6 +130,10 @@ class PipelineTests(unittest.TestCase):
             wav.writeframes(b"\0\0" * 4410)
         with self.assertRaises(ValueError):
             app.validate_wav(stream.getvalue())
+
+    def test_music_only_result_is_ignored(self):
+        self.assertEqual(app.clean_transcript("[MUSIK] [MUSIK]"), "")
+        self.assertEqual(app.clean_transcript("Hallo [MUSIK] Welt"), "Hallo Welt")
 
     def test_local_cli_reads_txt_and_preserves_unicode(self):
         with tempfile.TemporaryDirectory() as folder:

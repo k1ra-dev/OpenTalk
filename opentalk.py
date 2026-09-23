@@ -7,6 +7,7 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import socket
@@ -35,6 +36,39 @@ def config(name: str, default: str = "") -> str:
     return os.environ.get("OPENTALK_" + name, default)
 
 
+def local_data_dir() -> Path:
+    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "opentalk"
+
+
+def settings_path() -> Path:
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "opentalk/settings.json"
+
+
+def saved_source() -> str:
+    try:
+        return json.loads(settings_path().read_text(encoding="utf-8")).get("source", "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def model_path() -> Path:
+    return Path(config("MODEL", str(local_data_dir() / "whisper.cpp/models/ggml-small.bin"))).expanduser()
+
+
+def whisper_cli() -> str:
+    local = local_data_dir() / "whisper.cpp/build/bin/whisper-cli"
+    return config("WHISPER_CLI", str(local) if local.is_file() else "whisper-cli")
+
+
+def vad_model_path() -> Path:
+    return Path(config("VAD_MODEL", str(local_data_dir() / "whisper.cpp/models/ggml-silero-v6.2.0.bin"))).expanduser()
+
+
+def clean_transcript(value: str) -> str:
+    without_music = re.sub(r"\[(?:musik|music)\]", "", value, flags=re.IGNORECASE)
+    return re.sub(r"[ \t]{2,}", " ", without_music).strip()
+
+
 def inform(message: str) -> None:
     print(message, flush=True)
     if shutil.which("notify-send") and os.environ.get("DISPLAY", os.environ.get("WAYLAND_DISPLAY")):
@@ -58,10 +92,10 @@ def validate_wav(data: bytes) -> None:
 
 
 def transcribe_local(data: bytes) -> str:
-    model = Path(config("MODEL")).expanduser()
+    model = model_path()
     if not model.is_file():
         raise RuntimeError("Modell fehlt: OPENTALK_MODEL auf ggml-*.bin setzen.")
-    cli = config("WHISPER_CLI", "whisper-cli")
+    cli = whisper_cli()
     if not shutil.which(cli) and not Path(cli).is_file():
         raise RuntimeError("whisper-cli fehlt: OPENTALK_WHISPER_CLI setzen.")
     with tempfile.TemporaryDirectory(prefix="opentalk-") as directory:
@@ -69,14 +103,17 @@ def transcribe_local(data: bytes) -> str:
         output = Path(directory) / "result"
         wav.write_bytes(data)
         command = [cli, "-m", str(model), "-f", str(wav), "-l", config("LANGUAGE", "de"),
-                   "-otxt", "-of", str(output), "-nt", "-np"]
+                   "-otxt", "-of", str(output), "-nt", "-np", "-sns"]
+        if vad_model_path().is_file():
+            command.extend(["--vad", "-vm", str(vad_model_path())])
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=MAX_SECONDS + 90)
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError("Erkennung hat zu lange gedauert.") from exc
         if result.returncode != 0:
             raise RuntimeError("whisper-cli fehlgeschlagen: " + result.stderr[-600:])
-        return (output.with_suffix(".txt").read_text(encoding="utf-8")).strip()
+        result_file = output.with_suffix(".txt")
+        return clean_transcript(result_file.read_text(encoding="utf-8") if result_file.exists() else "")
 
 
 def transcribe(data: bytes) -> str:
@@ -94,7 +131,7 @@ def transcribe(data: bytes) -> str:
                                               "Content-Type": "audio/wav"})
     try:
         with urllib.request.urlopen(request, timeout=MAX_SECONDS + 95) as response:
-            return json.load(response)["text"]
+            return clean_transcript(json.load(response)["text"])
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"Server meldet HTTP {exc.code}.") from exc
 
@@ -127,7 +164,7 @@ def insert_text(value: str) -> None:
                 raise RuntimeError(f"{candidate} konnte nicht schreiben.") from None
     if method in ("auto", "clipboard") and shutil.which("wl-copy"):
         subprocess.run(["wl-copy", "--type", "text/plain;charset=utf-8"], input=value.encode(),
-                       check=True, timeout=10, capture_output=True)
+                       check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         inform("Text in Zwischenablage – mit Strg+V einfügen.")
         return
     if method == "stdout":
@@ -137,16 +174,22 @@ def insert_text(value: str) -> None:
 
 
 class Dictation:
-    def __init__(self):
+    def __init__(self, on_result=None, on_error=None, source: str | None = None):
         self.recorder: subprocess.Popen | None = None
         self.temp: tempfile.TemporaryDirectory | None = None
         self.audio_path: Path | None = None
         self.busy = False
         self.lock = threading.Lock()
         self.session = 0
+        self.closed = False
+        self.source = source if source is not None else config("SOURCE", saved_source())
+        self.on_result = on_result or (lambda value: insert_text(value))
+        self.on_error = on_error or (lambda message: inform("Fehler: " + message))
 
     def toggle(self) -> str:
         with self.lock:
+            if self.closed:
+                return "Aufnahme verworfen."
             if self.busy:
                 return "Erkennung läuft bereits."
             if self.recorder:
@@ -159,7 +202,7 @@ class Dictation:
             self.temp = tempfile.TemporaryDirectory(prefix="opentalk-")
             self.audio_path = Path(self.temp.name) / "audio.wav"
             command = ["pw-record", "--rate", "16000", "--channels", "1", "--format", "s16",
-                       str(self.audio_path)]
+                       *(["--target", self.source] if self.source else []), str(self.audio_path)]
             try:
                 self.recorder = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             except OSError:
@@ -196,13 +239,30 @@ class Dictation:
                 recorder.kill()
                 recorder.communicate()
             data = audio_path.read_bytes()
-            insert_text(transcribe(data))
+            self.on_result(transcribe(data))
         except Exception as exc:
-            inform("Fehler: " + str(exc))
+            self.on_error(str(exc))
         finally:
             temp.cleanup()
             with self.lock:
                 self.busy = False
+
+    def cancel(self) -> None:
+        """Discard an active recording when a foreground UI closes."""
+        with self.lock:
+            recorder, temp = self.recorder, self.temp
+            self.recorder = self.audio_path = self.temp = None
+            self.session += 1
+            self.closed = True
+        if recorder is not None:
+            recorder.send_signal(signal.SIGINT)
+            try:
+                recorder.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                recorder.kill()
+                recorder.communicate()
+        if temp is not None:
+            temp.cleanup()
 
 
 def send_command(command: str) -> str:
@@ -321,7 +381,7 @@ def main():
             token = config("TOKEN")
             if len(token) < 24:
                 raise RuntimeError("OPENTALK_TOKEN muss mindestens 24 Zeichen lang sein.")
-            if not Path(config("MODEL")).expanduser().is_file():
+            if not model_path().is_file():
                 raise RuntimeError("OPENTALK_MODEL auf eine vorhandene Modelldatei setzen.")
             with HTTPServer((args.host, args.port), make_handler(token)) as server:
                 print(f"OpenTalk hört auf {args.host}:{args.port}", flush=True)

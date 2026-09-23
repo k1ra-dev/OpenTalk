@@ -2,7 +2,7 @@
 
 Lokale Spracheingabe für Linux: Hotkey drücken → sprechen → Hotkey erneut drücken → Text im aktiven Textfeld. Die Erkennung läuft mit [whisper.cpp](https://github.com/ggml-org/whisper.cpp) auf dem eigenen Rechner oder optional auf dem eigenen Homeserver. Keine Anmeldung und keine Cloud-API.
 
-**Status: frühe Vorschau.** Die Codepfade wurden mit simulierten Mikrofon- und Eingabeprogrammen getestet; ein echter Test mit Mikrofon, Modell und Wayland steht noch aus. Der Hotkey schaltet die Aufnahme um, er reagiert noch nicht auf Loslassen.
+**Status: frühe Vorschau.** Der Hotkey schaltet die Aufnahme um, er reagiert noch nicht auf Loslassen.
 
 | Teil | Desktop | Homeserver |
 | --- | --- | --- |
@@ -13,8 +13,8 @@ Lokale Spracheingabe für Linux: Hotkey drücken → sprechen → Hotkey erneut 
 ## CachyOS / Arch: lokal starten
 
 1. Dieses Projekt nach `~/Programme/opentalk` entpacken. In VS Code **Datei → Ordner öffnen** und den Projektordner auswählen.
-2. Grundprogramme installieren: `sudo pacman -S --needed python pipewire cmake git base-devel wl-clipboard libnotify`. Für **Hyprland** zusätzlich `sudo pacman -S --needed wtype`. Für **KDE Wayland** [kwtype-git](https://aur.archlinux.org/packages/kwtype-git) mit `paru -S kwtype-git` installieren (AUR-Paket vorher prüfen) oder [KWtype](https://github.com/Sporif/KWtype) selbst bauen. Falls die virtuelle Eingabe fehlschlägt, legt `wl-copy` das Ergebnis in die Zwischenablage.
-3. `whisper.cpp` und ein **mehrsprachiges** Modell installieren:
+2. Grundprogramme installieren: `sudo pacman -S --needed python python-pyqt6 pipewire libpulse git base-devel pkgconf layer-shell-qt wl-clipboard libnotify`. Für **Hyprland** kann OpenTalk den kopierten Text direkt ins zuletzt aktive Fenster einfügen. Optional `sudo pacman -S --needed wtype`. Für **KDE Wayland** [kwtype-git](https://aur.archlinux.org/packages/kwtype-git) mit `paru -S kwtype-git` installieren (AUR-Paket vorher prüfen) oder [KWtype](https://github.com/Sporif/KWtype) selbst bauen.
+3. `./scripts/gui.sh` starten. Ein **Doppelklick** auf den schwebenden Kreis öffnet die Kreise für Mikrofon, Einrichtung und Schließen. Falls die Spracherkennung fehlt, über **⚙ → Jetzt einrichten** `whisper.cpp`, ein mehrsprachiges `small`-Modell und ein kleines Modell zur Spracherkennung im Benutzerordner installieren. Dafür werden etwa 466 MiB für das Hauptmodell heruntergeladen und `whisper-cli` lokal gebaut. Fehlt CMake, lädt die Einrichtung eine geprüfte portable Kopie (Linux x86_64) in den Benutzerordner. Alternativ eigene Pfade in `config.local.sh` setzen. Manuelle Installation:
 
    ```bash
    git clone https://github.com/ggml-org/whisper.cpp.git ~/whisper.cpp
@@ -24,16 +24,24 @@ Lokale Spracheingabe für Linux: Hotkey drücken → sprechen → Hotkey erneut 
    sh ./models/download-ggml-model.sh small
    ```
 
-   `small` ist ein Start für Deutsch. `base` braucht weniger Speicher; `medium` mehr. Modelle mit `.en` sind nur für Englisch.
+   Für die manuelle Installation die Pfade zu `ggml-small.bin` und `whisper-cli` in `config.local.sh` setzen. `small` ist ein Start für Deutsch. `base` braucht weniger Speicher; `medium` mehr. Modelle mit `.en` sind nur für Englisch.
 
-4. Im Projekt `config.example.sh` nach `config.local.sh` kopieren und dort bei Bedarf die Pfade ändern. Die persönliche Konfiguration bleibt außerhalb von Git. Dann im Projekt `./scripts/start.sh` starten, sprechen und denselben Befehl nochmals ausführen. Mit `python3 opentalk.py status` den Zustand abfragen.
+4. Für den Hotkey bei Bedarf `config.example.sh` nach `config.local.sh` kopieren. Die persönliche Konfiguration bleibt außerhalb von Git. Dann im Projekt `./scripts/start.sh` starten, sprechen und denselben Befehl nochmals ausführen. Mit `python3 opentalk.py status` den Zustand abfragen.
 5. Hotkey einrichten:
 
    - **KDE Plasma:** Systemeinstellungen → Tastenkürzel → Neu hinzufügen → Befehl oder Skript. Den **absoluten Pfad** zu `scripts/start.sh` als Befehl eintragen, etwa `/home/NAME/Programme/opentalk/scripts/start.sh`, und z. B. `Meta+Alt+R` wählen.
    - **Hyprland mit `hyprland.conf`:** `bind = SUPER ALT, R, exec, /home/NAME/Programme/opentalk/scripts/start.sh` zur vorhandenen Konfiguration hinzufügen.
    - **Hyprland mit `hyprland.lua`:** `hl.bind("SUPER + ALT + R", hl.dsp.exec_cmd("/home/NAME/Programme/opentalk/scripts/start.sh"))` zur vorhandenen Konfiguration hinzufügen. Seit Hyprland 0.55 ist Lua die bevorzugte Konfiguration; verwende die Form deiner installierten Version.
 
-Die ersten Erkennungen können dauern, weil `whisper-cli` das Modell momentan **für jede Aufnahme neu lädt**. Eine Aufnahme endet nach spätestens zwei Minuten. Temporäre WAV-Dateien werden anschließend gelöscht. Bei Nutzung der Zwischenablage ersetzt das Ergebnis ihren bisherigen Inhalt und kann im Verlauf bleiben.
+### Als Anwendung im App-Menü installieren
+
+Im Projektordner `./scripts/install-desktop.sh` ausführen. Danach im App-Menü **OpenTalk** suchen und anklicken. Das Skript kopiert Programm und Symbol nach `~/.local/share` und legt `~/.local/share/applications/opentalk.desktop` an. Nach Änderungen am Projekt das Installationsskript erneut ausführen, damit die installierte Version aktualisiert wird. Das Sprachmodell und die gespeicherte Mikrofonwahl bleiben dabei erhalten.
+
+### Schwebende Oberfläche
+
+`./scripts/gui.sh` startet einen kleinen schwebenden Kreis. **Ein Klick** startet die Aufnahme; der nächste Klick stoppt sie. Während der Aufnahme werden ungefähr alle vier Sekunden fertige Sprachabschnitte erkannt und automatisch in das zuvor fokussierte Textfeld eingefügt. Nach dem Stoppen wird der letzte Abschnitt verarbeitet. Der Kreis bleibt ohne Tastaturfokus auch über Vollbildfenstern sichtbar. **Doppelklick** öffnet drei weitere Kreise: Mikrofonwahl, Einrichtung und Schließen. Ein weiterer Doppelklick verbirgt sie. Den Hauptkreis mit gedrückter linker Maustaste ziehen, um ihn zu verschieben; die Position bleibt gespeichert. Die Mikrofonwahl gilt auch für spätere Starts und den Hotkey. Unter Hyprland erfolgt das direkte Einfügen bei fehlendem `wtype` technisch über die Zwischenablage und einen gezielten Einfügebefehl. Reine Musikmarkierungen wie `[MUSIK]` werden verworfen. Die Ersteinrichtung braucht eine Internetverbindung; die Erkennung danach läuft lokal.
+
+Die Erkennung kann je Abschnitt etwas dauern, weil `whisper-cli` das Modell momentan **für jeden Abschnitt neu lädt**. Eine Aufnahme endet nach spätestens zwei Minuten. Temporäre Audiodateien werden anschließend gelöscht. Bei Nutzung der Zwischenablage ersetzt jeder Abschnitt ihren bisherigen Inhalt und kann im Verlauf bleiben.
 
 ## Optional: Erkennung auf dem Homeserver
 
@@ -56,8 +64,10 @@ Im Servermodus wird die WAV-Aufnahme an **deinen** Server geschickt. HTTP selbst
 | --- | --- |
 | `OPENTALK_MODEL` | Pfad zu `ggml-*.bin` auf dem Erkennungsrechner |
 | `OPENTALK_WHISPER_CLI` | Pfad zu `whisper-cli` oder Name im `PATH` |
+| `OPENTALK_VAD_MODEL` | Optionaler Pfad zum Silero-Modell für Sprachabschnitte |
 | `OPENTALK_LANGUAGE` | `de` (Standard) oder `auto` |
 | `OPENTALK_INSERT` | `auto`, `wtype`, `kwtype`, `clipboard`, `stdout` |
+| `OPENTALK_SOURCE` | Optionaler PipeWire-Quellname; sonst gilt die Auswahl in der Oberfläche |
 | `OPENTALK_SERVER_URL` | URL des optionalen eigenen Servers |
 | `OPENTALK_TOKEN` | Gemeinsames Token mit mindestens 24 Zeichen |
 
