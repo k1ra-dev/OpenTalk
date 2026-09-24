@@ -1,7 +1,9 @@
-"""Discover selectable PipeWire recording sources through PulseAudio compatibility."""
+"""Discover selectable recording sources on Linux and macOS."""
 from __future__ import annotations
 
 import json
+import platform
+import re
 import subprocess
 
 
@@ -21,6 +23,28 @@ def parse_sources(data: str) -> list[tuple[str, str]]:
 
 
 def list_sources() -> list[tuple[str, str]]:
+    if platform.system() == "Darwin":
+        if platform.machine() != "arm64":
+            raise RuntimeError("macOS wird nur auf Macs mit M-Prozessor unterstützt.")
+        try:
+            response = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-list_devices", "true", "-f", "avfoundation", "-i", ""],
+                capture_output=True, text=True, timeout=5)
+            devices = []
+            in_audio = False
+            for line in response.stderr.splitlines():
+                if "AVFoundation audio devices:" in line:
+                    in_audio = True
+                    continue
+                if in_audio:
+                    match = re.search(r"\[(\d+)\]\s+(.+)$", line)
+                    if match:
+                        devices.append((match.group(2).strip(), match.group(1)))
+            if devices:
+                return devices
+            raise ValueError("keine Audiogeräte in ffmpeg-Ausgabe")
+        except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+            raise RuntimeError("Mikrofone konnten nicht gelesen werden (ffmpeg prüfen).") from exc
     try:
         response = subprocess.run(["pactl", "-f", "json", "list", "sources"],
                                   capture_output=True, text=True, check=True, timeout=5)

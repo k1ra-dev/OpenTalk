@@ -11,14 +11,31 @@ case "$model" in
     *) echo "Unbekanntes Whisper-Modell." >&2; exit 2 ;;
 esac
 
-data_dir=${XDG_DATA_HOME:-"$HOME/.local/share"}/opentalk
+case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64)
+        if [ -n "${XDG_DATA_HOME:-}" ]; then
+            data_dir="$XDG_DATA_HOME/opentalk"
+        else
+            data_dir="$HOME/Library/Application Support/OpenTalk"
+        fi
+        ;;
+    Darwin-*) echo "OpenTalk unterstützt auf macOS nur M-Prozessoren (Apple Silicon)." >&2; exit 1 ;;
+    *) data_dir=${XDG_DATA_HOME:-"$HOME/.local/share"}/opentalk ;;
+esac
 repo="$data_dir/whisper.cpp"
 destination="$repo/models/ggml-$model.bin"
 if [ ! -f "$repo/models/download-ggml-model.sh" ]; then
     echo "whisper.cpp fehlt. Zuerst die lokale Erkennung einrichten." >&2
     exit 1
 fi
-if [ -f "$destination" ] && printf '%s  %s\n' "$sha1" "$destination" | sha1sum -c -; then
+check_sha1() {
+    if command -v sha1sum >/dev/null 2>&1; then
+        printf '%s  %s\n' "$sha1" "$1" | sha1sum -c -
+    else
+        [ "$(shasum -a 1 "$1" | awk '{print $1}')" = "$sha1" ]
+    fi
+}
+if [ -f "$destination" ] && check_sha1 "$destination"; then
     echo "Modell $model ist bereits installiert."
     exit 0
 fi
@@ -27,6 +44,6 @@ temporary=$(mktemp -d "$repo/models/.opentalk-download.XXXXXX")
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 echo "Lade das mehrsprachige Whisper-Modell $model …"
 sh "$repo/models/download-ggml-model.sh" "$model" "$temporary"
-printf '%s  %s\n' "$sha1" "$temporary/ggml-$model.bin" | sha1sum -c -
+check_sha1 "$temporary/ggml-$model.bin"
 mv "$temporary/ggml-$model.bin" "$destination"
 echo "Modell $model ist bereit."

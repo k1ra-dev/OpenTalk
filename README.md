@@ -1,7 +1,7 @@
 # OpenTalk
 
 <p align="center">
-  <em>Local voice dictation for Linux — press a hotkey, speak, and your words appear in the active text field.</em>
+  <em>Local voice dictation for Linux and Apple Silicon Macs — speak locally, type anywhere.</em>
 </p>
 
 **OpenTalk** turns your voice into text **100% locally** using [whisper.cpp](https://github.com/ggml-org/whisper.cpp). No cloud APIs, no accounts, no telemetry — your voice never leaves your machine (unless *you* choose your own home server as the recognition backend).
@@ -15,10 +15,10 @@ Hotkey / Click → Speak → Stop → Text lands in the focused window ✨
 - 🖥️ **Floating overlay bubble** — always on top (even over fullscreen), draggable, no keyboard focus stealing
 - ⚡ **Live dictation** — finished speech segments are transcribed and typed out every ~4 s while you keep talking
 - 🎚️ **Model switcher in the GUI** — tiny, base, small, medium, large-v3 (75 MiB – 2.9 GiB), with checksum-verified downloads
-- 🎙️ **Microphone picker** — choose your PipeWire source in the UI, remembered across restarts
+- 🎙️ **Microphone picker** — choose a PipeWire or macOS input in the UI, remembered across restarts
 - 🧠 **VAD segmentation** — optional Silero voice-activity detection splits speech cleanly
 - 🔒 **Privacy first** — recognition runs locally on whisper.cpp; optional self-hosted server mode with token auth
-- ⌨️ **Wayland-native text insertion** — `wtype` (Hyprland), `kwtype` (KDE), or clipboard fallback
+- ⌨️ **Native text insertion** — Wayland tools on Linux, clipboard + Cmd+V on macOS
 - 🧩 **Desktop integration** — install as an app, bind a global hotkey, drag & reposition the bubble
 - 🏠 **Optional home-server mode** — offload recognition to your own server (great for laptops / ARM)
 
@@ -26,20 +26,25 @@ Hotkey / Click → Speak → Stop → Text lands in the focused window ✨
 
 | Part | Desktop | Home server |
 | --- | --- | --- |
-| Recording | PipeWire (`pw-record`) | — |
+| Recording | Linux: PipeWire · macOS: AVFoundation/FFmpeg | — |
 | Recognition | `whisper-cli` (local) or your server | `whisper-cli` |
-| Text insertion | `wtype` (Hyprland) · `kwtype` (KDE) · `wl-copy` fallback | — |
+| Text insertion | Linux: `wtype`/`kwtype`/`wl-copy` · macOS: `pbcopy`/Cmd+V | — |
 
-## Quick Start (Arch / CachyOS)
+## Installation
 
-### 1. Get the project
+Linux and macOS use separate installers. The macOS build is deliberately limited to
+**Apple Silicon (M1, M2, M3, M4 and newer M processors)**; Intel Macs are not supported.
+
+### Get the project (both platforms)
 
 ```bash
 git clone https://github.com/k1ra-dev/OpenTalk.git ~/Programme/opentalk
 cd ~/Programme/opentalk
 ```
 
-### 2. Install system dependencies
+### Linux (Arch / CachyOS)
+
+Install the Linux dependencies:
 
 ```bash
 sudo pacman -S --needed python python-pyqt6 pipewire libpulse git base-devel pkgconf \
@@ -51,7 +56,16 @@ Optional but recommended:
 - **Hyprland:** `sudo pacman -S --needed wtype` (direct insertion into the last-active window)
 - **KDE Wayland:** [kwtype-git](https://aur.archlinux.org/packages/kwtype-git) via `paru -S kwtype-git` (review the AUR package before installing)
 
-### 3. Run the GUI
+Install the Linux desktop version:
+
+```bash
+./scripts/install-linux.sh
+```
+
+This adds **OpenTalk** to the app menu (`~/.local/share`). Re-run the installer after code
+changes; your selected model and microphone are kept.
+
+Or run it directly from the checkout:
 
 ```bash
 ./scripts/gui.sh
@@ -60,7 +74,23 @@ Optional but recommended:
 A floating circle appears. **Click** it to start/stop dictation, **double-click** to open the
 menu (microphone picker, setup ⚙, close).
 
-### 4. One-time setup
+### macOS (M processors only, no Intel)
+
+The Mac version requires [Homebrew](https://brew.sh/) and an `arm64` terminal. Install
+Homebrew first, then run:
+
+```bash
+brew install python cmake ffmpeg git
+./scripts/install-macos.sh
+open "$HOME/Applications/OpenTalk.app"
+```
+
+The installer stops with an explicit error on Intel Macs. On first launch, allow microphone
+access. For automatic insertion into the previously active text field, also enable OpenTalk
+under **System Settings → Privacy & Security → Accessibility**. Without that permission, the
+recognized text remains on the clipboard and can be inserted with `Cmd+V`.
+
+### One-time speech-model setup
 
 If speech recognition is missing, go to **double-click → ⚙ → Set up now**. This installs
 `whisper.cpp`, a multilingual `small` model, and a small VAD model into your user directory
@@ -83,16 +113,7 @@ Then point `config.local.sh` to your `ggml-small.bin` and `whisper-cli` paths.
 Models ending in `.en` are English-only.
 </details>
 
-### 5. Install as a desktop app (optional)
-
-```bash
-./scripts/install-desktop.sh
-```
-
-Adds **OpenTalk** to your app menu (program, icon, `.desktop` entry in `~/.local/share`).
-Re-run the script after code changes; your model choice and microphone selection are kept.
-
-### 6. Bind a global hotkey (optional)
+### Linux global hotkey (optional)
 
 - **KDE Plasma:** System Settings → Shortcuts → Add New → Command or Script → absolute path
   to `scripts/start.sh`, e.g. `Meta+Alt+R`
@@ -167,7 +188,7 @@ For Tailscale, set `--host` to your server's **Tailscale IP**. On the desktop, a
 | `OPENTALK_VAD_MODEL` | Optional path to the Silero VAD model |
 | `OPENTALK_LANGUAGE` | `de` (default) or `auto` |
 | `OPENTALK_INSERT` | `auto`, `wtype`, `kwtype`, `clipboard`, `stdout` |
-| `OPENTALK_SOURCE` | Optional PipeWire source name (else UI selection) |
+| `OPENTALK_SOURCE` | Optional PipeWire source name (Linux) or AVFoundation audio index (Mac) |
 | `OPENTALK_SERVER_URL` | URL of your optional home server |
 | `OPENTALK_TOKEN` | Shared token, minimum 24 characters |
 
@@ -176,8 +197,9 @@ Template: `config.example.sh`.
 
 ## Troubleshooting
 
-- **Insertion test:** Hyprland `printf 'Test äöü' | wtype -`; KDE `kwtype 'Test äöü'` in a
-  focused text field. In terminals, manual paste is usually `Ctrl+Shift+V`.
+- **Linux insertion test:** Hyprland `printf 'Test äöü' | wtype -`; KDE `kwtype 'Test äöü'`.
+- **Mac insertion test:** `printf 'Test äöü' | pbcopy`, then `Cmd+V`. If automatic insertion
+  fails, check the Accessibility permission.
 - **Service won't start:** run `python3 opentalk.py daemon` in a terminal to see the error.
 - **Setup downloads:** first-time setup needs an internet connection; recognition afterwards
   runs fully offline.
@@ -198,13 +220,15 @@ License: [MIT](LICENSE). Third-party tools and models carry their own licenses.
 ```
 opentalk.py            # Core: recording, transcription, insertion, server mode
 opentalk_gui.py        # PyQt6 floating bubble + setup dialog + model switcher
-audio_sources.py       # PipeWire source management
+audio_sources.py       # PipeWire / macOS AVFoundation source management
 live_dictation.py      # Streaming segment recognition
 layer_shell_bridge.cpp # Layer-shell overlay for Wayland
 scripts/
 ├── gui.sh             # Launch the floating bubble
 ├── start.sh           # Toggle-mode launcher (hotkey target)
 ├── install-desktop.sh # Install as desktop application
+├── install-linux.sh   # Linux-only installer entry point
+├── install-macos.sh   # Apple-Silicon-only .app installer
 ├── setup-model.sh     # Install whisper.cpp (+ portable CMake fallback)
 └── download-model.sh  # Checksum-verified model downloads
 ```
@@ -212,5 +236,5 @@ scripts/
 ---
 
 **Status: early preview.** Core flows are tested with simulated microphone/input programs;
-a full end-to-end test on real Wayland hardware is ongoing. The hotkey currently toggles
-recording (press-and-hold is not implemented yet).
+full end-to-end checks on real Wayland and Apple Silicon hardware are ongoing. The hotkey
+currently toggles recording (press-and-hold is not implemented yet).

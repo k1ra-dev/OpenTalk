@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Offline dictation for Linux desktops; optional private Whisper server."""
+"""Offline dictation for Linux and Apple Silicon macOS; optional Whisper server."""
 from __future__ import annotations
 
 import argparse
 import hmac
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import shutil
@@ -34,7 +35,12 @@ MODEL_MIN_BYTES = {
 
 
 def runtime_socket() -> Path:
-    base = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+    if platform.system() == "Darwin":
+        base = Path(tempfile.gettempdir()) / f"opentalk-{os.getuid()}"
+        base.mkdir(mode=0o700, exist_ok=True)
+        base.chmod(0o700)
+    else:
+        base = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
     if not base.is_dir() or base.stat().st_uid != os.getuid():
         raise RuntimeError("Kein privates XDG_RUNTIME_DIR gefunden. Bitte in einer Desktop-Sitzung starten.")
     return base / "opentalk.sock"
@@ -45,11 +51,36 @@ def config(name: str, default: str = "") -> str:
 
 
 def local_data_dir() -> Path:
+    if platform.system() == "Darwin" and "XDG_DATA_HOME" not in os.environ:
+        return Path.home() / "Library/Application Support/OpenTalk"
     return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "opentalk"
 
 
 def settings_path() -> Path:
+    if platform.system() == "Darwin" and "XDG_CONFIG_HOME" not in os.environ:
+        return Path.home() / "Library/Application Support/OpenTalk/settings.json"
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "opentalk/settings.json"
+
+
+def recorder_command(destination: Path, source: str = "", raw: bool = False) -> list[str]:
+    """Return a native 16 kHz mono recording command for the current OS."""
+    if platform.system() == "Darwin":
+        if platform.machine() != "arm64":
+            raise RuntimeError("OpenTalk für macOS unterstützt nur Macs mit M-Prozessor (Apple Silicon).")
+        command = ["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "avfoundation",
+                   "-i", f":{source or 'default'}", "-ar", "16000", "-ac", "1"]
+        if raw:
+            command.extend(["-f", "s16le"])
+        else:
+            command.extend(["-c:a", "pcm_s16le"])
+        return [*command, "-y", str(destination)]
+    return ["pw-record", *(["--raw"] if raw else []), "--rate", "16000",
+            "--channels", "1", "--format", "s16",
+            *(["--target", source] if source else []), str(destination)]
+
+
+def recorder_dependency() -> str:
+    return "ffmpeg" if platform.system() == "Darwin" else "pw-record"
 
 
 def saved_source() -> str:
@@ -101,7 +132,11 @@ def clean_transcript(value: str) -> str:
 
 def inform(message: str) -> None:
     print(message, flush=True)
-    if shutil.which("notify-send") and os.environ.get("DISPLAY", os.environ.get("WAYLAND_DISPLAY")):
+    if platform.system() == "Darwin" and shutil.which("osascript"):
+        escaped = message.replace("\\", "\\\\").replace('"', '\\"')
+        subprocess.run(["osascript", "-e", f'display notification "{escaped}" with title "OpenTalk"'],
+                       capture_output=True, timeout=4, check=False)
+    elif shutil.which("notify-send") and os.environ.get("DISPLAY", os.environ.get("WAYLAND_DISPLAY")):
         subprocess.run(["notify-send", "OpenTalk", message], capture_output=True, timeout=4, check=False)
 
 
@@ -171,6 +206,19 @@ def insert_text(value: str) -> None:
         inform("Keine Sprache erkannt.")
         return
     method = config("INSERT", "auto")
+    if platform.system() == "Darwin" and method in ("auto", "clipboard"):
+        if not shutil.which("pbcopy"):
+            raise RuntimeError("pbcopy fehlt; die macOS-Zwischenablage ist nicht verfügbar.")
+        subprocess.run(["pbcopy"], input=value.encode("utf-8"), check=True, timeout=10)
+        if method == "auto" and shutil.which("osascript"):
+            result = subprocess.run(
+                ["osascript", "-e", 'tell application "System Events" to keystroke "v" using command down'],
+                capture_output=True, timeout=10, check=False)
+            if result.returncode == 0:
+                inform("Text eingefügt.")
+                return
+        inform("Text in Zwischenablage – mit Cmd+V einfügen.")
+        return
     desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
     if method == "auto":
         candidates = ("wtype", "kwtype") if "hyprland" in desktop else ("kwtype", "wtype")
@@ -231,14 +279,13 @@ class Dictation:
                 return "Aufnahme beendet. Erkenne Text …"
             self.temp = tempfile.TemporaryDirectory(prefix="opentalk-")
             self.audio_path = Path(self.temp.name) / "audio.wav"
-            command = ["pw-record", "--rate", "16000", "--channels", "1", "--format", "s16",
-                       *(["--target", self.source] if self.source else []), str(self.audio_path)]
+            command = recorder_command(self.audio_path, self.source)
             try:
                 self.recorder = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             except OSError:
                 self.temp.cleanup()
                 self.temp = self.audio_path = None
-                raise RuntimeError("pw-record fehlt. PipeWire installieren.") from None
+                raise RuntimeError(f"{recorder_dependency()} fehlt. Aufnahme-Abhängigkeit installieren.") from None
             time.sleep(0.12)
             if self.recorder.poll() is not None:
                 error = self.recorder.stderr.read().decode(errors="replace")[-350:]
@@ -392,7 +439,7 @@ def transcribe_local_checked(data: bytes) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Lokale Spracheingabe für Linux mit optionalem Homeserver")
+    parser = argparse.ArgumentParser(description="Lokale Spracheingabe für Linux/macOS mit optionalem Homeserver")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("toggle", "daemon", "status"):
         commands.add_parser(name)

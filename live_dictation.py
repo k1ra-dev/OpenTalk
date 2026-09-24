@@ -55,9 +55,7 @@ class LiveDictation:
             raise RuntimeError("Die vorherige Aufnahme wird noch verarbeitet.")
         self.temp = tempfile.TemporaryDirectory(prefix="opentalk-live-")
         self.audio_path = Path(self.temp.name) / "audio.raw"
-        command = ["pw-record", "--raw", "--rate", str(SAMPLE_RATE), "--channels", "1",
-                   "--format", "s16", *(["--target", self.source] if self.source else []),
-                   str(self.audio_path)]
+        command = opentalk.recorder_command(self.audio_path, self.source, raw=True)
         try:
             self.recorder = subprocess.Popen(command, stdout=subprocess.DEVNULL,
                                              stderr=subprocess.DEVNULL)

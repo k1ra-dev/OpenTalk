@@ -9,6 +9,21 @@ import live_dictation as live
 
 
 class LiveDictationTests(unittest.TestCase):
+    def test_start_uses_platform_recorder_command(self):
+        recorder = Mock()
+        recorder.poll.return_value = None
+        engine = live.LiveDictation(Mock(), Mock(), Mock(), source="selected-mic")
+        with patch.object(live.opentalk, "recorder_command",
+                          return_value=["native-recorder", "audio.raw"]) as command, \
+             patch.object(live.subprocess, "Popen", return_value=recorder), \
+             patch.object(live.time, "sleep"), patch.object(live.threading, "Thread") as thread, \
+             patch.object(live.threading, "Timer"):
+            engine.start()
+        command.assert_called_once()
+        self.assertEqual(command.call_args.args[1], "selected-mic")
+        self.assertTrue(command.call_args.kwargs["raw"])
+        thread.return_value.start.assert_called_once()
+
     def test_processes_full_chunks_and_short_final_tail_once(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "audio.raw"

@@ -1,6 +1,16 @@
 #!/bin/sh
 set -eu
-data_dir=${XDG_DATA_HOME:-"$HOME/.local/share"}/opentalk
+case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64)
+        if [ -n "${XDG_DATA_HOME:-}" ]; then
+            data_dir="$XDG_DATA_HOME/opentalk"
+        else
+            data_dir="$HOME/Library/Application Support/OpenTalk"
+        fi
+        ;;
+    Darwin-*) echo "OpenTalk unterstützt auf macOS nur M-Prozessoren (Apple Silicon)." >&2; exit 1 ;;
+    *) data_dir=${XDG_DATA_HOME:-"$HOME/.local/share"}/opentalk ;;
+esac
 repo="$data_dir/whisper.cpp"
 mkdir -p "$data_dir"
 if command -v cmake >/dev/null 2>&1; then

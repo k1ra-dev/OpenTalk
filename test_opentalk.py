@@ -2,6 +2,7 @@ import io
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import threading
 import time
@@ -27,7 +28,8 @@ def sample_wav():
 
 class PipelineTests(unittest.TestCase):
     def test_hyprland_types_unicode_through_wtype_stdin(self):
-        with patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "Hyprland", "OPENTALK_INSERT": "auto"}), \
+        with patch.object(app.platform, "system", return_value="Linux"), \
+             patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "Hyprland", "OPENTALK_INSERT": "auto"}), \
              patch.object(app.shutil, "which", side_effect=lambda name: "/bin/" + name), \
              patch.object(app.subprocess, "run") as run, patch.object(app, "inform"):
             app.insert_text("Grüß dich")
@@ -35,7 +37,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["input"], "Grüß dich".encode("utf-8"))
 
     def test_auto_falls_back_to_clipboard(self):
-        with patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "Hyprland", "OPENTALK_INSERT": "auto"}), \
+        with patch.object(app.platform, "system", return_value="Linux"), \
+             patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "Hyprland", "OPENTALK_INSERT": "auto"}), \
              patch.object(app.shutil, "which", side_effect=lambda name: "/bin/" + name), \
              patch.object(app.subprocess, "run", side_effect=[app.subprocess.CalledProcessError(1, "wtype"),
                                                                app.subprocess.CalledProcessError(1, "kwtype"),
@@ -61,7 +64,8 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(value, "Hallo")
             done.set()
 
-        with patch.object(app.subprocess, "Popen", side_effect=spawn), \
+        with patch.object(app.platform, "system", return_value="Linux"), \
+             patch.object(app.subprocess, "Popen", side_effect=spawn), \
              patch.object(app, "transcribe", return_value="Hallo"), \
              patch.object(app, "insert_text", side_effect=insert), \
              patch.object(app.threading, "Timer"):
@@ -83,7 +87,8 @@ class PipelineTests(unittest.TestCase):
     def test_window_can_cancel_recording(self):
         recorder = Mock()
         recorder.poll.return_value = None
-        with patch.object(app.subprocess, "Popen", return_value=recorder) as spawn, \
+        with patch.object(app.platform, "system", return_value="Linux"), \
+             patch.object(app.subprocess, "Popen", return_value=recorder) as spawn, \
              patch.object(app.threading, "Timer"):
             engine = app.Dictation(on_result=Mock(), source="mic.node")
             engine.toggle()
@@ -96,6 +101,37 @@ class PipelineTests(unittest.TestCase):
         recorder.send_signal.assert_called_once()
         recorder.communicate.assert_called_once()
 
+    def test_recorder_commands_are_separate_for_linux_and_apple_silicon(self):
+        destination = Path("/tmp/opentalk-audio.raw")
+        with patch.object(app.platform, "system", return_value="Linux"):
+            linux = app.recorder_command(destination, "mic.node", raw=True)
+        self.assertEqual(linux[0], "pw-record")
+        self.assertIn("--target", linux)
+        self.assertIn("mic.node", linux)
+
+        with patch.object(app.platform, "system", return_value="Darwin"), \
+             patch.object(app.platform, "machine", return_value="arm64"):
+            mac = app.recorder_command(destination, "2", raw=True)
+        self.assertEqual(mac[0], "ffmpeg")
+        self.assertIn(":2", mac)
+        self.assertIn("s16le", mac)
+
+        with patch.object(app.platform, "system", return_value="Darwin"), \
+             patch.object(app.platform, "machine", return_value="x86_64"):
+            with self.assertRaisesRegex(RuntimeError, "M-Prozessor"):
+                app.recorder_command(destination)
+
+    def test_mac_auto_insert_copies_and_pastes(self):
+        with patch.object(app.platform, "system", return_value="Darwin"), \
+             patch.dict(os.environ, {"OPENTALK_INSERT": "auto"}), \
+             patch.object(app.shutil, "which", side_effect=lambda name: "/usr/bin/" + name), \
+             patch.object(app.subprocess, "run", side_effect=[Mock(returncode=0), Mock(returncode=0)]) as run, \
+             patch.object(app, "inform"):
+            app.insert_text("Grüß dich")
+        self.assertEqual(run.call_args_list[0].args[0], ["pbcopy"])
+        self.assertEqual(run.call_args_list[0].kwargs["input"], "Grüß dich".encode("utf-8"))
+        self.assertEqual(run.call_args_list[1].args[0][0], "osascript")
+
     def test_source_list_ignores_speaker_monitors_and_unplugged_inputs(self):
         sources = [
             {"name": "speaker.monitor", "description": "Monitor"},
@@ -105,6 +141,19 @@ class PipelineTests(unittest.TestCase):
         ]
         self.assertEqual(audio_sources.parse_sources(json.dumps(sources)),
                          [("USB-Mikrofon", "mic.usb")])
+
+    def test_mac_source_list_reads_avfoundation_audio_devices(self):
+        output = """[AVFoundation indev @ 0x1] AVFoundation video devices:
+[AVFoundation indev @ 0x1] [0] Screen
+[AVFoundation indev @ 0x1] AVFoundation audio devices:
+[AVFoundation indev @ 0x1] [0] MacBook Pro Microphone
+[AVFoundation indev @ 0x1] [1] USB Mic
+"""
+        with patch.object(audio_sources.platform, "system", return_value="Darwin"), \
+             patch.object(audio_sources.platform, "machine", return_value="arm64"), \
+             patch.object(audio_sources.subprocess, "run", return_value=Mock(stderr=output)):
+            self.assertEqual(audio_sources.list_sources(),
+                             [("MacBook Pro Microphone", "0"), ("USB Mic", "1")])
 
     def test_saved_microphone_is_used_by_hotkey(self):
         with tempfile.TemporaryDirectory() as folder, \
@@ -159,7 +208,7 @@ class PipelineTests(unittest.TestCase):
             path = Path(folder)
             (path / "model.bin").write_bytes(b"fake model")
             binary = path / "whisper-cli"
-            binary.write_text("#!/usr/bin/env python3\nimport pathlib, sys\n"
+            binary.write_text(f"#!{sys.executable}\nimport pathlib, sys\n"
                               "pathlib.Path(sys.argv[sys.argv.index('-of')+1] + '.txt').write_text('Grüß dich!\\n', encoding='utf-8')\n")
             binary.chmod(0o755)
             with patch.dict(os.environ, {"OPENTALK_MODEL": str(path / "model.bin"),

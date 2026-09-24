@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Small, non-activating dictation overlay for Linux desktops."""
+"""Small, non-activating dictation overlay for Linux and Apple Silicon macOS."""
 from __future__ import annotations
 
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import shlex
@@ -52,8 +53,11 @@ def active_target() -> str:
 
 
 def setup_problem() -> str | None:
-    if not shutil.which("pw-record"):
-        return "PipeWire fehlt: pw-record installieren."
+    dependency = opentalk.recorder_dependency()
+    if platform.system() == "Darwin" and platform.machine() != "arm64":
+        return "macOS wird nur auf Macs mit M-Prozessor unterstützt."
+    if not shutil.which(dependency):
+        return f"{dependency} fehlt: Aufnahme-Abhängigkeit installieren."
     if opentalk.config("SERVER_URL"):
         if not opentalk.config("TOKEN"):
             return "Homeserver-Token fehlt."
@@ -120,6 +124,18 @@ def apply_layer_shell(window: QWidget) -> bool:
 def insert_into_target(value: str, target: str) -> str:
     if not value:
         return "Keine Sprache erkannt."
+    if platform.system() == "Darwin":
+        if not shutil.which("pbcopy"):
+            return "Zwischenablage konnte nicht beschrieben werden: pbcopy fehlt."
+        try:
+            subprocess.run(["pbcopy"], input=value.encode("utf-8"), check=True, timeout=10)
+            result = subprocess.run(
+                ["osascript", "-e", 'tell application "System Events" to keystroke "v" using command down'],
+                capture_output=True, timeout=10, check=False)
+            return ("Text eingefügt." if result.returncode == 0 else
+                    "Text kopiert – Bedienungshilfen erlauben oder mit Cmd+V einfügen.")
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            return "Zwischenablage konnte nicht beschrieben werden."
     if target and ADDRESS.fullmatch(target) and shutil.which("hyprctl") and shutil.which("wl-copy"):
         try:
             subprocess.run(["wl-copy", "--type", "text/plain;charset=utf-8"],
