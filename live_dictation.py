@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-import signal
+import platform
 import subprocess
 import tempfile
 import threading
@@ -57,8 +57,9 @@ class LiveDictation:
         self.audio_path = Path(self.temp.name) / "audio.raw"
         command = opentalk.recorder_command(self.audio_path, self.source, raw=True)
         try:
-            self.recorder = subprocess.Popen(command, stdout=subprocess.DEVNULL,
-                                             stderr=subprocess.DEVNULL)
+            self.recorder = subprocess.Popen(
+                command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdin=subprocess.PIPE if platform.system() == "Windows" else None)
         except OSError as exc:
             self.temp.cleanup()
             self.temp = self.audio_path = None
@@ -84,7 +85,7 @@ class LiveDictation:
             self.timer.cancel()
         if self.recorder is not None and self.recorder.poll() is None:
             try:
-                self.recorder.send_signal(signal.SIGINT)
+                opentalk.stop_recorder(self.recorder)
             except ProcessLookupError:
                 pass
 
@@ -126,7 +127,7 @@ class LiveDictation:
         finally:
             if recorder.poll() is None:
                 try:
-                    recorder.send_signal(signal.SIGINT)
+                    opentalk.stop_recorder(recorder)
                     recorder.wait(timeout=3)
                 except (ProcessLookupError, subprocess.TimeoutExpired):
                     recorder.kill()

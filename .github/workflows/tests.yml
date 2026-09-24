@@ -11,4 +11,4 @@ jobs:
         with:
           python-version: '3.12'
       - run: python3 -m unittest discover -s . -p 'test_*.py' -v
-      - run: python3 -m py_compile opentalk.py opentalk_gui.py live_dictation.py audio_sources.py test_opentalk.py test_live_dictation.py
+      - run: python3 -m py_compile opentalk.py opentalk_gui.py live_dictation.py audio_sources.py model_setup.py test_opentalk.py test_live_dictation.py

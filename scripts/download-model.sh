@@ -24,10 +24,7 @@ case "$(uname -s)-$(uname -m)" in
 esac
 repo="$data_dir/whisper.cpp"
 destination="$repo/models/ggml-$model.bin"
-if [ ! -f "$repo/models/download-ggml-model.sh" ]; then
-    echo "whisper.cpp fehlt. Zuerst die lokale Erkennung einrichten." >&2
-    exit 1
-fi
+mkdir -p "$repo/models"
 check_sha1() {
     if command -v sha1sum >/dev/null 2>&1; then
         printf '%s  %s\n' "$sha1" "$1" | sha1sum -c -
@@ -43,7 +40,9 @@ fi
 temporary=$(mktemp -d "$repo/models/.opentalk-download.XXXXXX")
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 echo "Lade das mehrsprachige Whisper-Modell $model …"
-sh "$repo/models/download-ggml-model.sh" "$model" "$temporary"
+curl -fL --retry 5 --retry-delay 5 \
+    -o "$temporary/ggml-$model.bin" \
+    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$model.bin"
 check_sha1 "$temporary/ggml-$model.bin"
 mv "$temporary/ggml-$model.bin" "$destination"
 echo "Modell $model ist bereit."

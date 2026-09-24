@@ -45,7 +45,8 @@ app_bundle="$HOME/Applications/OpenTalk.app"
 
 mkdir -p "$app_source/scripts" "$app_bundle/Contents/MacOS" "$app_bundle/Contents/Resources"
 cp "$project_dir/opentalk.py" "$project_dir/opentalk_gui.py" \
-   "$project_dir/audio_sources.py" "$project_dir/live_dictation.py" "$app_source/"
+   "$project_dir/audio_sources.py" "$project_dir/live_dictation.py" \
+   "$project_dir/model_setup.py" "$app_source/"
 cp "$project_dir/scripts/gui.sh" "$project_dir/scripts/setup-model.sh" \
    "$project_dir/scripts/download-model.sh" "$app_source/scripts/"
 if [ -f "$project_dir/config.local.sh" ]; then
@@ -56,7 +57,7 @@ fi
 if [ ! -x "$venv/bin/python" ]; then
     "$python_bin" -m venv "$venv"
 fi
-"$venv/bin/python" -m pip install --upgrade PyQt6
+"$venv/bin/python" -m pip install --upgrade PyQt6 pynput
 
 launcher="$app_bundle/Contents/MacOS/OpenTalk"
 cat > "$launcher" <<EOF

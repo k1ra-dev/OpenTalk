@@ -7,4 +7,5 @@ config.local.sh
 *.wav
 build/
 dist/
+artifacts/
 *.egg-info/

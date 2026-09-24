@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Offline dictation for Linux and Apple Silicon macOS; optional Whisper server."""
+"""Offline dictation for Linux, Windows, and Apple Silicon macOS."""
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hmac
 import json
 import os
@@ -35,13 +36,14 @@ MODEL_MIN_BYTES = {
 
 
 def runtime_socket() -> Path:
-    if platform.system() == "Darwin":
-        base = Path(tempfile.gettempdir()) / f"opentalk-{os.getuid()}"
+    if platform.system() in ("Darwin", "Windows"):
+        identity = str(os.getuid()) if hasattr(os, "getuid") else os.environ.get("USERNAME", "user")
+        base = Path(tempfile.gettempdir()) / f"opentalk-{identity}"
         base.mkdir(mode=0o700, exist_ok=True)
         base.chmod(0o700)
     else:
         base = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
-    if not base.is_dir() or base.stat().st_uid != os.getuid():
+    if not base.is_dir() or (hasattr(os, "getuid") and base.stat().st_uid != os.getuid()):
         raise RuntimeError("Kein privates XDG_RUNTIME_DIR gefunden. Bitte in einer Desktop-Sitzung starten.")
     return base / "opentalk.sock"
 
@@ -50,13 +52,28 @@ def config(name: str, default: str = "") -> str:
     return os.environ.get("OPENTALK_" + name, default)
 
 
+def resource_dir() -> Path:
+    """Directory containing resources, including inside a PyInstaller bundle."""
+    return Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+
+
+def bundled_executable(name: str) -> Path | None:
+    suffix = ".exe" if platform.system() == "Windows" else ""
+    candidate = resource_dir() / "bin" / (name + suffix)
+    return candidate if candidate.is_file() else None
+
+
 def local_data_dir() -> Path:
+    if platform.system() == "Windows" and "XDG_DATA_HOME" not in os.environ:
+        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "OpenTalk"
     if platform.system() == "Darwin" and "XDG_DATA_HOME" not in os.environ:
         return Path.home() / "Library/Application Support/OpenTalk"
     return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "opentalk"
 
 
 def settings_path() -> Path:
+    if platform.system() == "Windows" and "XDG_CONFIG_HOME" not in os.environ:
+        return local_data_dir() / "settings.json"
     if platform.system() == "Darwin" and "XDG_CONFIG_HOME" not in os.environ:
         return Path.home() / "Library/Application Support/OpenTalk/settings.json"
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "opentalk/settings.json"
@@ -67,12 +84,18 @@ def recorder_command(destination: Path, source: str = "", raw: bool = False) -> 
     if platform.system() == "Darwin":
         if platform.machine() != "arm64":
             raise RuntimeError("OpenTalk für macOS unterstützt nur Macs mit M-Prozessor (Apple Silicon).")
-        command = ["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "avfoundation",
+        command = [recorder_dependency(), "-nostdin", "-loglevel", "error", "-f", "avfoundation",
                    "-i", f":{source or 'default'}", "-ar", "16000", "-ac", "1"]
         if raw:
             command.extend(["-f", "s16le"])
         else:
             command.extend(["-c:a", "pcm_s16le"])
+        return [*command, "-y", str(destination)]
+    if platform.system() == "Windows":
+        source_name = source or "default"
+        command = [recorder_dependency(), "-nostdin", "-loglevel", "error", "-f", "dshow",
+                   "-i", f"audio={source_name}", "-ar", "16000", "-ac", "1"]
+        command.extend(["-f", "s16le"] if raw else ["-c:a", "pcm_s16le"])
         return [*command, "-y", str(destination)]
     return ["pw-record", *(["--raw"] if raw else []), "--rate", "16000",
             "--channels", "1", "--format", "s16",
@@ -80,7 +103,23 @@ def recorder_command(destination: Path, source: str = "", raw: bool = False) -> 
 
 
 def recorder_dependency() -> str:
-    return "ffmpeg" if platform.system() == "Darwin" else "pw-record"
+    if platform.system() in ("Darwin", "Windows"):
+        custom = config("FFMPEG")
+        bundled = bundled_executable("ffmpeg")
+        return custom or (str(bundled) if bundled else "ffmpeg")
+    return "pw-record"
+
+
+def stop_recorder(recorder: subprocess.Popen) -> None:
+    """Ask the platform recorder to finish its output cleanly."""
+    if platform.system() == "Windows" and recorder.stdin is not None:
+        try:
+            recorder.stdin.write(b"q\n")
+            recorder.stdin.flush()
+            return
+        except (OSError, ValueError):
+            pass
+    recorder.send_signal(signal.SIGINT)
 
 
 def saved_source() -> str:
@@ -118,7 +157,9 @@ def model_path() -> Path:
 
 def whisper_cli() -> str:
     local = local_data_dir() / "whisper.cpp/build/bin/whisper-cli"
-    return config("WHISPER_CLI", str(local) if local.is_file() else "whisper-cli")
+    bundled = bundled_executable("whisper-cli")
+    fallback = str(local) if local.is_file() else str(bundled) if bundled else "whisper-cli"
+    return config("WHISPER_CLI", fallback)
 
 
 def vad_model_path() -> Path:
@@ -206,6 +247,14 @@ def insert_text(value: str) -> None:
         inform("Keine Sprache erkannt.")
         return
     method = config("INSERT", "auto")
+    if platform.system() == "Windows" and method in ("auto", "clipboard"):
+        windows_copy_text(value)
+        if method == "auto":
+            windows_paste()
+            inform("Text eingefügt.")
+        else:
+            inform("Text in Zwischenablage – mit Strg+V einfügen.")
+        return
     if platform.system() == "Darwin" and method in ("auto", "clipboard"):
         if not shutil.which("pbcopy"):
             raise RuntimeError("pbcopy fehlt; die macOS-Zwischenablage ist nicht verfügbar.")
@@ -251,6 +300,48 @@ def insert_text(value: str) -> None:
     raise RuntimeError("Zum Einfügen wtype, kwtype oder wl-copy installieren.")
 
 
+def windows_copy_text(value: str) -> None:
+    """Place Unicode text on the native Windows clipboard."""
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GlobalAlloc.restype = ctypes.c_void_p
+    kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalLock.restype = ctypes.c_void_p
+    kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+    user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+    user32.SetClipboardData.restype = ctypes.c_void_p
+    encoded = (value + "\0").encode("utf-16-le")
+    handle = kernel32.GlobalAlloc(0x0002, len(encoded))
+    if not handle:
+        raise RuntimeError("Windows-Zwischenablage konnte nicht reserviert werden.")
+    pointer = kernel32.GlobalLock(handle)
+    if not pointer:
+        kernel32.GlobalFree(handle)
+        raise RuntimeError("Windows-Zwischenablage konnte nicht gesperrt werden.")
+    ctypes.memmove(pointer, encoded, len(encoded))
+    kernel32.GlobalUnlock(handle)
+    if not user32.OpenClipboard(None):
+        kernel32.GlobalFree(handle)
+        raise RuntimeError("Windows-Zwischenablage ist gerade belegt.")
+    try:
+        user32.EmptyClipboard()
+        if not user32.SetClipboardData(13, handle):  # CF_UNICODETEXT
+            kernel32.GlobalFree(handle)
+            raise RuntimeError("Text konnte nicht in die Zwischenablage geschrieben werden.")
+        handle = None  # Ownership was transferred to the system.
+    finally:
+        user32.CloseClipboard()
+
+
+def windows_paste() -> None:
+    user32 = ctypes.windll.user32
+    user32.keybd_event(0x11, 0, 0, 0)       # Ctrl down
+    user32.keybd_event(0x56, 0, 0, 0)       # V down
+    user32.keybd_event(0x56, 0, 0x0002, 0)  # V up
+    user32.keybd_event(0x11, 0, 0x0002, 0)  # Ctrl up
+
+
 class Dictation:
     def __init__(self, on_result=None, on_error=None, source: str | None = None):
         self.recorder: subprocess.Popen | None = None
@@ -281,7 +372,9 @@ class Dictation:
             self.audio_path = Path(self.temp.name) / "audio.wav"
             command = recorder_command(self.audio_path, self.source)
             try:
-                self.recorder = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                self.recorder = subprocess.Popen(
+                    command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                    stdin=subprocess.PIPE if platform.system() == "Windows" else None)
             except OSError:
                 self.temp.cleanup()
                 self.temp = self.audio_path = None
@@ -309,7 +402,7 @@ class Dictation:
 
     def finish(self, recorder, audio_path, temp):
         try:
-            recorder.send_signal(signal.SIGINT)
+            stop_recorder(recorder)
             try:
                 recorder.communicate(timeout=5)
             except subprocess.TimeoutExpired:
@@ -332,7 +425,7 @@ class Dictation:
             self.session += 1
             self.closed = True
         if recorder is not None:
-            recorder.send_signal(signal.SIGINT)
+            stop_recorder(recorder)
             try:
                 recorder.communicate(timeout=5)
             except subprocess.TimeoutExpired:
@@ -439,7 +532,7 @@ def transcribe_local_checked(data: bytes) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Lokale Spracheingabe für Linux/macOS mit optionalem Homeserver")
+    parser = argparse.ArgumentParser(description="Lokale Spracheingabe für Linux, macOS und Windows")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("toggle", "daemon", "status"):
         commands.add_parser(name)

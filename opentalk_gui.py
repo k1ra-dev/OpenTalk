@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small, non-activating dictation overlay for Linux and Apple Silicon macOS."""
+"""Small, non-activating dictation overlay for Linux, Windows, and Apple Silicon macOS."""
 from __future__ import annotations
 
 import json
@@ -12,13 +12,13 @@ import shutil
 import subprocess
 import sys
 import ctypes
-import fcntl
 
 from PyQt6 import sip
-from PyQt6.QtCore import QPoint, QProcess, QRect, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QCursor, QPainter, QPen
+from PyQt6.QtCore import (QLockFile, QPoint, QProcess, QRect, Qt,
+                          QTimer, pyqtSignal)
+from PyQt6.QtGui import QColor, QCursor, QKeySequence, QPainter, QPen
 from PyQt6.QtWidgets import (QApplication, QDialog, QHBoxLayout, QLabel, QMenu,
-                             QPushButton, QPlainTextEdit, QSlider, QToolTip,
+                             QPushButton, QPlainTextEdit, QSlider, QToolTip, QKeySequenceEdit,
                              QVBoxLayout, QWidget)
 
 import audio_sources
@@ -31,6 +31,37 @@ CIRCLE = 68
 SATELLITE = 56
 MENU_WIDTH = 260
 MENU_HEIGHT = 204
+
+
+def default_hotkey() -> str:
+    return "Meta+Shift+Space" if platform.system() == "Darwin" else "Ctrl+Alt+R"
+
+
+def selected_hotkey() -> str:
+    value = read_settings().get("hotkey", default_hotkey())
+    return value if isinstance(value, str) and value else default_hotkey()
+
+
+def pynput_hotkey(value: str) -> str:
+    names = {"ctrl": "ctrl", "control": "ctrl", "alt": "alt", "shift": "shift",
+             "meta": "cmd", "cmd": "cmd", "win": "cmd", "space": "space",
+             "return": "enter", "enter": "enter", "tab": "tab", "escape": "esc"}
+    parts = [part.strip().lower() for part in value.split("+") if part.strip()]
+    converted = []
+    for part in parts:
+        key = names.get(part, part)
+        converted.append(key if len(key) == 1 else f"<{key}>")
+    if len(converted) < 2:
+        raise ValueError("Bitte mindestens eine Sondertaste und eine Taste wählen.")
+    return "+".join(converted)
+
+
+def model_helper_command(*arguments: str) -> tuple[str, list[str]]:
+    if getattr(sys, "frozen", False):
+        suffix = ".exe" if platform.system() == "Windows" else ""
+        helper = Path(sys.executable).with_name("opentalk-model-setup" + suffix)
+        return str(helper), list(arguments)
+    return sys.executable, [str(Path(__file__).resolve().parent / "model_setup.py"), *arguments]
 
 
 def hyprctl(*args: str) -> str:
@@ -56,8 +87,8 @@ def setup_problem() -> str | None:
     dependency = opentalk.recorder_dependency()
     if platform.system() == "Darwin" and platform.machine() != "arm64":
         return "macOS wird nur auf Macs mit M-Prozessor unterstützt."
-    if not shutil.which(dependency):
-        return f"{dependency} fehlt: Aufnahme-Abhängigkeit installieren."
+    if not shutil.which(dependency) and not Path(dependency).is_file():
+        return f"{Path(dependency).name} fehlt: Aufnahme-Abhängigkeit installieren."
     if opentalk.config("SERVER_URL"):
         if not opentalk.config("TOKEN"):
             return "Homeserver-Token fehlt."
@@ -136,6 +167,13 @@ def insert_into_target(value: str, target: str) -> str:
                     "Text kopiert – Bedienungshilfen erlauben oder mit Cmd+V einfügen.")
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             return "Zwischenablage konnte nicht beschrieben werden."
+    if platform.system() == "Windows":
+        try:
+            opentalk.windows_copy_text(value)
+            opentalk.windows_paste()
+            return "Text eingefügt."
+        except (OSError, RuntimeError):
+            return "Text konnte nicht in das aktive Fenster eingefügt werden."
     if target and ADDRESS.fullmatch(target) and shutil.which("hyprctl") and shutil.which("wl-copy"):
         try:
             subprocess.run(["wl-copy", "--type", "text/plain;charset=utf-8"],
@@ -180,7 +218,7 @@ class SetupDialog(QDialog):
     def __init__(self, parent: QWidget):
         super().__init__(parent)
         self.setWindowTitle("OpenTalk Einstellungen")
-        self.resize(520, 390)
+        self.resize(520, 465)
         self.setStyleSheet("""
             QDialog { background-color: #17212d; }
             QLabel { color: #edf3fa; }
@@ -200,6 +238,20 @@ class SetupDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(12)
+        hotkey_heading = QLabel("Globaler Hotkey")
+        hotkey_heading.setObjectName("heading")
+        layout.addWidget(hotkey_heading)
+        hotkey_row = QHBoxLayout()
+        self.hotkey_edit = QKeySequenceEdit(QKeySequence(selected_hotkey()))
+        self.hotkey_button = QPushButton("Übernehmen")
+        self.hotkey_button.clicked.connect(self.apply_hotkey)
+        hotkey_row.addWidget(self.hotkey_edit, 1)
+        hotkey_row.addWidget(self.hotkey_button)
+        layout.addLayout(hotkey_row)
+        self.hotkey_info = QLabel()
+        self.hotkey_info.setObjectName("muted")
+        self.hotkey_info.setWordWrap(True)
+        layout.addWidget(self.hotkey_info)
         heading = QLabel("Whisper-Modell")
         heading.setObjectName("heading")
         layout.addWidget(heading)
@@ -253,6 +305,20 @@ class SetupDialog(QDialog):
         self.slider.setEnabled(not self.model_locked)
         self.refresh_model_info()
         self.refresh_engine_info()
+        self.hotkey_info.setText(f"Aktiv: {selected_hotkey()}")
+
+    def apply_hotkey(self) -> None:
+        value = self.hotkey_edit.keySequence().toString(QKeySequence.SequenceFormat.PortableText)
+        if not value:
+            self.hotkey_info.setText("Der Hotkey darf nicht leer sein.")
+            return
+        try:
+            pynput_hotkey(value)
+            save_setting("hotkey", value)
+            status = self.parent().configure_hotkey()
+            self.hotkey_info.setText(status)
+        except (OSError, ValueError) as exc:
+            self.hotkey_info.setText(str(exc))
 
     def chosen_model(self) -> str:
         return opentalk.MODEL_NAMES[self.slider.value()]
@@ -314,8 +380,12 @@ class SetupDialog(QDialog):
         self.download_button.setEnabled(False)
         self.log.clear()
         self.info.setText("Einrichtung läuft …")
-        script = Path(__file__).resolve().parent / "scripts/setup-model.sh"
-        self.process.start("sh", [str(script)])
+        if opentalk.bundled_executable("whisper-cli"):
+            program, arguments = model_helper_command("--setup-models")
+            self.process.start(program, arguments)
+        else:
+            script = opentalk.resource_dir() / "scripts/setup-model.sh"
+            self.process.start("sh", [str(script)])
 
     def download_model(self) -> None:
         name = self.chosen_model()
@@ -327,8 +397,8 @@ class SetupDialog(QDialog):
         self.download_button.setEnabled(False)
         self.log.clear()
         self.info.setText(f"Lade {name} herunter und prüfe die Datei …")
-        script = Path(__file__).resolve().parent / "scripts/download-model.sh"
-        self.process.start("sh", [str(script), name])
+        program, arguments = model_helper_command("--download-model", name)
+        self.process.start(program, arguments)
 
     def read_output(self) -> None:
         output = bytes(self.process.readAllStandardOutput()).decode(errors="replace")
@@ -363,6 +433,7 @@ class Overlay(QWidget):
     chunk_ready = pyqtSignal(str)
     error_ready = pyqtSignal(str)
     finished_ready = pyqtSignal()
+    hotkey_pressed = pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -388,8 +459,15 @@ class Overlay(QWidget):
         self.menu_main_x = 96
         self.state = "idle"
         self.engine: LiveDictation | None = None
+        self.hotkey_listener = None
         self.setup_dialog: SetupDialog | None = None
         self.source = opentalk.saved_source()
+        if platform.system() == "Windows" and not self.source:
+            try:
+                sources = audio_sources.list_sources()
+                self.source = sources[0][1] if sources else ""
+            except RuntimeError:
+                pass
         self.target = ""
         self.output_started = False
         self.drag_offset: QPoint | None = None
@@ -415,12 +493,29 @@ class Overlay(QWidget):
         self.chunk_ready.connect(self.on_chunk)
         self.error_ready.connect(self.on_error)
         self.finished_ready.connect(self.on_finished)
+        self.hotkey_pressed.connect(self.toggle_recording)
         self.layer_shell = apply_layer_shell(self)
         self.place()
         self.show()
+        self.configure_hotkey()
         if not self.layer_shell:
             QTimer.singleShot(350, self.pin)
         self.update_status()
+
+    def configure_hotkey(self) -> str:
+        if self.hotkey_listener is not None:
+            self.hotkey_listener.stop()
+            self.hotkey_listener = None
+        value = selected_hotkey()
+        try:
+            from pynput import keyboard
+            self.hotkey_listener = keyboard.GlobalHotKeys(
+                {pynput_hotkey(value): lambda: self.hotkey_pressed.emit()})
+            self.hotkey_listener.start()
+            return f"Aktiv: {value}"
+        except Exception as exc:
+            self.set_status(f"Hotkey {value} konnte nicht registriert werden: {exc}", error=True)
+            return f"Hotkey nicht aktiv: {exc}"
 
     def round_button(self, label: str, tooltip: str, handler) -> QPushButton:
         button = QPushButton(label, self)
@@ -543,6 +638,8 @@ class Overlay(QWidget):
     def end_drag(self) -> None:
         self.update_drag()
         self.drag_timer.stop()
+        if self.hotkey_listener is not None:
+            self.hotkey_listener.stop()
         self.releaseMouse()
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.drag_offset = None
@@ -739,16 +836,18 @@ class Overlay(QWidget):
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] in ("--setup-models", "--download-model"):
+        import model_setup
+        return model_setup.main(sys.argv[1:])
     lock_path = opentalk.runtime_socket().parent / "opentalk-gui.lock"
-    with lock_path.open("w") as lockfile:
-        try:
-            fcntl.flock(lockfile, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return 0
-        app = QApplication(sys.argv)
-        app.setApplicationName("OpenTalk")
-        overlay = Overlay()
-        return app.exec()
+    lock = QLockFile(str(lock_path))
+    lock.setStaleLockTime(0)
+    if not lock.tryLock(100):
+        return 0
+    app = QApplication(sys.argv)
+    app.setApplicationName("OpenTalk")
+    overlay = Overlay()
+    return app.exec()
 
 
 if __name__ == "__main__":

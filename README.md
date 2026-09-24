@@ -1,7 +1,7 @@
 # OpenTalk
 
 <p align="center">
-  <em>Local voice dictation for Linux and Apple Silicon Macs — speak locally, type anywhere.</em>
+  <em>Local voice dictation for Linux, Windows, and Apple Silicon Macs.</em>
 </p>
 
 **OpenTalk** turns your voice into text **100% locally** using [whisper.cpp](https://github.com/ggml-org/whisper.cpp). No cloud APIs, no accounts, no telemetry — your voice never leaves your machine (unless *you* choose your own home server as the recognition backend).
@@ -15,10 +15,10 @@ Hotkey / Click → Speak → Stop → Text lands in the focused window ✨
 - 🖥️ **Floating overlay bubble** — always on top (even over fullscreen), draggable, no keyboard focus stealing
 - ⚡ **Live dictation** — finished speech segments are transcribed and typed out every ~4 s while you keep talking
 - 🎚️ **Model switcher in the GUI** — tiny, base, small, medium, large-v3 (75 MiB – 2.9 GiB), with checksum-verified downloads
-- 🎙️ **Microphone picker** — choose a PipeWire or macOS input in the UI, remembered across restarts
+- 🎙️ **Microphone picker** — choose a PipeWire, macOS, or Windows input in the UI
 - 🧠 **VAD segmentation** — optional Silero voice-activity detection splits speech cleanly
 - 🔒 **Privacy first** — recognition runs locally on whisper.cpp; optional self-hosted server mode with token auth
-- ⌨️ **Native text insertion** — Wayland tools on Linux, clipboard + Cmd+V on macOS
+- ⌨️ **Native text insertion** — Wayland tools, macOS Cmd+V, or Windows Ctrl+V
 - 🧩 **Desktop integration** — install as an app, bind a global hotkey, drag & reposition the bubble
 - 🏠 **Optional home-server mode** — offload recognition to your own server (great for laptops / ARM)
 
@@ -26,14 +26,43 @@ Hotkey / Click → Speak → Stop → Text lands in the focused window ✨
 
 | Part | Desktop | Home server |
 | --- | --- | --- |
-| Recording | Linux: PipeWire · macOS: AVFoundation/FFmpeg | — |
+| Recording | Linux: PipeWire · macOS: AVFoundation · Windows: DirectShow | — |
 | Recognition | `whisper-cli` (local) or your server | `whisper-cli` |
-| Text insertion | Linux: `wtype`/`kwtype`/`wl-copy` · macOS: `pbcopy`/Cmd+V | — |
+| Text insertion | Linux: `wtype`/`kwtype` · macOS: Cmd+V · Windows: Ctrl+V | — |
 
 ## Installation
 
-Linux and macOS use separate installers. The macOS build is deliberately limited to
+Linux, macOS, and Windows receive separate packages. The macOS build is limited to
 **Apple Silicon (M1, M2, M3, M4 and newer M processors)**; Intel Macs are not supported.
+
+### Ready-to-run downloads (no Git clone)
+
+- **[Download for macOS — Apple Silicon only](https://github.com/k1ra-dev/OpenTalk/releases/latest/download/OpenTalk-macOS-arm64.zip)**
+- **[Download for Linux — x86_64](https://github.com/k1ra-dev/OpenTalk/releases/latest/download/OpenTalk-Linux-x86_64.tar.gz)**
+- **[Download for Windows — x86_64](https://github.com/k1ra-dev/OpenTalk/releases/latest/download/OpenTalk-Windows-x86_64.zip)**
+
+Extract the matching download and launch `OpenTalk.app` on macOS or `OpenTalk`/`OpenTalk.exe`
+inside the Linux/Windows folder. The packages already contain Python, PyQt, `whisper-cli`,
+and FFmpeg where needed. On first launch, use **double-click → ⚙ → Set up now** to download
+the speech model. macOS may require right-clicking the unsigned app and choosing **Open** the
+first time.
+
+The source installation below remains available for development.
+
+### Global hotkey
+
+OpenTalk assigns a working default shortcut for each platform:
+
+| System | Default hotkey |
+| --- | --- |
+| macOS | `Cmd+Shift+Space` |
+| Windows | `Ctrl+Alt+R` |
+| Linux | `Ctrl+Alt+R` |
+
+Double-click the bubble and change the shortcut directly in **Settings → Global hotkey**.
+macOS requires Accessibility permission for global shortcuts. On some Wayland compositors,
+global shortcut registration is restricted by the desktop; the existing KDE/Hyprland system
+shortcut remains the fallback.
 
 ### Get the project (both platforms)
 
@@ -188,7 +217,8 @@ For Tailscale, set `--host` to your server's **Tailscale IP**. On the desktop, a
 | `OPENTALK_VAD_MODEL` | Optional path to the Silero VAD model |
 | `OPENTALK_LANGUAGE` | `de` (default) or `auto` |
 | `OPENTALK_INSERT` | `auto`, `wtype`, `kwtype`, `clipboard`, `stdout` |
-| `OPENTALK_SOURCE` | Optional PipeWire source name (Linux) or AVFoundation audio index (Mac) |
+| `OPENTALK_SOURCE` | PipeWire name, AVFoundation index, or Windows DirectShow device name |
+| `OPENTALK_FFMPEG` | Optional custom FFmpeg path on macOS or Windows |
 | `OPENTALK_SERVER_URL` | URL of your optional home server |
 | `OPENTALK_TOKEN` | Shared token, minimum 24 characters |
 
@@ -220,8 +250,9 @@ License: [MIT](LICENSE). Third-party tools and models carry their own licenses.
 ```
 opentalk.py            # Core: recording, transcription, insertion, server mode
 opentalk_gui.py        # PyQt6 floating bubble + setup dialog + model switcher
-audio_sources.py       # PipeWire / macOS AVFoundation source management
+audio_sources.py       # PipeWire / macOS AVFoundation / Windows DirectShow sources
 live_dictation.py      # Streaming segment recognition
+model_setup.py         # Cross-platform model downloader for packaged apps
 layer_shell_bridge.cpp # Layer-shell overlay for Wayland
 scripts/
 ├── gui.sh             # Launch the floating bubble
@@ -229,6 +260,7 @@ scripts/
 ├── install-desktop.sh # Install as desktop application
 ├── install-linux.sh   # Linux-only installer entry point
 ├── install-macos.sh   # Apple-Silicon-only .app installer
+├── build-release.sh   # Build a downloadable package for the current platform
 ├── setup-model.sh     # Install whisper.cpp (+ portable CMake fallback)
 └── download-model.sh  # Checksum-verified model downloads
 ```
@@ -236,5 +268,5 @@ scripts/
 ---
 
 **Status: early preview.** Core flows are tested with simulated microphone/input programs;
-full end-to-end checks on real Wayland and Apple Silicon hardware are ongoing. The hotkey
-currently toggles recording (press-and-hold is not implemented yet).
+full end-to-end checks on real Wayland, Windows, and Apple Silicon hardware are ongoing.
+The hotkey toggles recording (press-and-hold is not implemented yet).

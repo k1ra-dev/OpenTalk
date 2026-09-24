@@ -121,6 +121,13 @@ class PipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "M-Prozessor"):
                 app.recorder_command(destination)
 
+        with patch.object(app.platform, "system", return_value="Windows"), \
+             patch.object(app, "bundled_executable", return_value=None):
+            windows = app.recorder_command(destination, "USB Microphone", raw=True)
+        self.assertEqual(windows[0], "ffmpeg")
+        self.assertIn("dshow", windows)
+        self.assertIn("audio=USB Microphone", windows)
+
     def test_mac_auto_insert_copies_and_pastes(self):
         with patch.object(app.platform, "system", return_value="Darwin"), \
              patch.dict(os.environ, {"OPENTALK_INSERT": "auto"}), \
@@ -154,6 +161,17 @@ class PipelineTests(unittest.TestCase):
              patch.object(audio_sources.subprocess, "run", return_value=Mock(stderr=output)):
             self.assertEqual(audio_sources.list_sources(),
                              [("MacBook Pro Microphone", "0"), ("USB Mic", "1")])
+
+    def test_windows_source_list_reads_directshow_audio_devices(self):
+        output = '''[dshow @ 0001] "Integrated Microphone" (audio)
+[dshow @ 0001]   Alternative name "@device_cm_1"
+[dshow @ 0001] "USB Mic" (audio)
+'''
+        with patch.object(audio_sources.platform, "system", return_value="Windows"), \
+             patch.object(audio_sources.subprocess, "run", return_value=Mock(stderr=output)):
+            self.assertEqual(audio_sources.list_sources(),
+                             [("Integrated Microphone", "Integrated Microphone"),
+                              ("USB Mic", "USB Mic")])
 
     def test_saved_microphone_is_used_by_hotkey(self):
         with tempfile.TemporaryDirectory() as folder, \
@@ -207,12 +225,14 @@ class PipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)
             (path / "model.bin").write_bytes(b"fake model")
-            binary = path / "whisper-cli"
-            binary.write_text(f"#!{sys.executable}\nimport pathlib, sys\n"
-                              "pathlib.Path(sys.argv[sys.argv.index('-of')+1] + '.txt').write_text('Grüß dich!\\n', encoding='utf-8')\n")
-            binary.chmod(0o755)
+
+            def fake_cli(command, **_kwargs):
+                Path(command[command.index("-of") + 1] + ".txt").write_text(
+                    "Grüß dich!\n", encoding="utf-8")
+                return Mock(returncode=0, stderr="")
             with patch.dict(os.environ, {"OPENTALK_MODEL": str(path / "model.bin"),
-                                        "OPENTALK_WHISPER_CLI": str(binary)}):
+                                        "OPENTALK_WHISPER_CLI": sys.executable}), \
+                 patch.object(app.subprocess, "run", side_effect=fake_cli):
                 self.assertEqual(app.transcribe(sample_wav()), "Grüß dich!")
 
     def test_server_auth_and_wav_handling(self):
