@@ -441,6 +441,11 @@ class Overlay(QWidget):
         self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint |
                             Qt.WindowType.WindowStaysOnTopHint |
                             Qt.WindowType.WindowDoesNotAcceptFocus)
+        if platform.system() == "Darwin":
+            # Qt normally hides macOS tool windows as soon as another app becomes
+            # active. Keep the dictation bubble visible while the user works in
+            # the target app (for example a browser or text editor).
+            self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMouseTracking(True)
@@ -843,7 +848,11 @@ def main() -> int:
     lock = QLockFile(str(lock_path))
     lock.setStaleLockTime(0)
     if not lock.tryLock(100):
-        return 0
+        # A hard kill can leave a lock behind on macOS. QLockFile verifies the
+        # recorded process before removing it, so a real running instance stays
+        # protected while a stale lock no longer prevents future launches.
+        if not lock.removeStaleLockFile() or not lock.tryLock(100):
+            return 0
     app = QApplication(sys.argv)
     app.setApplicationName("OpenTalk")
     overlay = Overlay()
