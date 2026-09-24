@@ -22,7 +22,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-          cache: pip
       - name: Install build tools
         run: |
           sudo apt-get update
@@ -52,7 +51,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-          cache: pip
       - name: Verify Apple Silicon runner
         run: test "$(uname -m)" = arm64
       - name: Install build tools
@@ -86,7 +84,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-          cache: pip
       - name: Install build tools
         run: python -m pip install pyinstaller PyQt6 imageio-ffmpeg pynput
       - name: Test
