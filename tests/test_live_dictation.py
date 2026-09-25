@@ -71,13 +71,22 @@ class LiveDictationTests(unittest.TestCase):
             engine.recorder = recorder
             engine.audio_path = path
             engine.stop_requested.set()
+            counts = []
+            engine.on_pending = counts.append
+            reader = path.open("rb", buffering=0)
             with (
+                patch.object(Path, "open", return_value=reader) as open_audio,
                 patch.object(live.platform, "system", return_value="Linux"),
                 patch.object(
                     live.opentalk, "transcribe", side_effect=["eins", "zwei"]
                 ) as transcribe,
             ):
                 engine._run()
+            open_audio.assert_called_once_with("rb", buffering=0)
+            self.assertTrue(reader.closed)
+            self.assertEqual(counts[-1], 0)
+            self.assertEqual(sum(b - a for a, b in zip([0] + counts, counts, strict=False) if b > a), 2)
+            self.assertTrue(all(count >= 0 for count in counts))
             self.assertEqual(chunks, ["eins", "zwei"])
             self.assertEqual(errors, [])
             self.assertEqual(finished, [True])
@@ -89,6 +98,13 @@ class LiveDictationTests(unittest.TestCase):
 
     def test_meter_keeps_up_while_recognition_is_blocked(self):
         recognizing, release, metered = threading.Event(), threading.Event(), threading.Event()
+        backlog = threading.Event()
+        counts = []
+
+        def pending(count):
+            counts.append(count)
+            if count >= 2:
+                backlog.set()
 
         def transcribe(_wav):
             recognizing.set()
@@ -102,6 +118,7 @@ class LiveDictationTests(unittest.TestCase):
             recorder = Mock()
             recorder.poll.return_value = None
             engine = live.LiveDictation(Mock(), Mock(), Mock(), on_level=lambda _level: metered.set())
+            engine.on_pending = pending
             engine.recorder, engine.audio_path = recorder, path
             with patch.object(live.opentalk, "transcribe", side_effect=transcribe):
                 worker = threading.Thread(target=engine._run)
@@ -113,8 +130,9 @@ class LiveDictationTests(unittest.TestCase):
                     # Supply more microphone frames while the first inference is
                     # deliberately stalled. Metering must not depend on it.
                     with path.open("ab") as stream:
-                        stream.write(b"\x00\x10" * 16_000)
+                        stream.write(b"\x00\x10" * (16_000 * 6))
                     self.assertTrue(metered.wait(1))
+                    self.assertTrue(backlog.wait(1))
                     self.assertFalse(release.is_set())
                 finally:
                     engine.stop_requested.set()
@@ -124,6 +142,7 @@ class LiveDictationTests(unittest.TestCase):
                 self.assertFalse(worker.is_alive())
                 engine.on_error.assert_not_called()
                 engine.on_finished.assert_called_once()
+                self.assertEqual(counts[-1], 0)
 
     def test_short_final_speech_is_padded_not_dropped(self):
         with tempfile.TemporaryDirectory() as folder:

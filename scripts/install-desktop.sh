@@ -18,7 +18,7 @@ mkdir -p "$app_dir/scripts" "$app_dir/build" "$applications_dir" "$icons_dir"
 cp "$project_dir/opentalk.py" "$project_dir/opentalk_gui.py" \
    "$project_dir/audio_sources.py" "$project_dir/live_dictation.py" "$project_dir/model_setup.py" \
    "$project_dir/audio_processing.py" "$project_dir/hotkeys.py" \
-   "$project_dir/layer_shell_bridge.cpp" "$app_dir/"
+   "$project_dir/layer_shell_bridge.cpp" "$project_dir/diagnostics.py" "$app_dir/"
 cp "$project_dir/scripts/gui.sh" "$project_dir/scripts/setup-model.sh" \
    "$project_dir/scripts/download-model.sh" "$project_dir/scripts/python.sh" "$app_dir/scripts/"
 "$OPENTALK_PYTHON" -c 'import sys; print(sys.executable)' > "$app_dir/.python-path"

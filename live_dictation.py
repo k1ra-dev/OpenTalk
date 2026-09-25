@@ -56,13 +56,16 @@ def pcm_to_wav(data: bytes) -> bytes:
 
 
 class LiveDictation:
-    def __init__(self, on_chunk, on_error, on_finished, source: str = "", on_level=None, on_notice=None):
+    def __init__(self, on_chunk, on_error, on_finished, source: str = "", on_level=None, on_notice=None, on_pending=None):
         self.on_chunk = on_chunk
         self.on_error = on_error
         self.on_finished = on_finished
         self.source = source
         self.on_level = on_level or (lambda level: None)
         self.on_notice = on_notice or (lambda message: None)
+        self.on_pending = on_pending or (lambda count: None)
+        self.pending_lock = threading.Lock()
+        self.pending_count = 0
         self.recorder: subprocess.Popen | None = None
         self.temp: tempfile.TemporaryDirectory | None = None
         self.audio_path: Path | None = None
@@ -140,19 +143,29 @@ class LiveDictation:
         self.cancelled.set()
         self.stop()
 
+    def _pending(self, change: int) -> None:
+        # Includes queued and currently recognized audio, but not microphone buffers.
+        with self.pending_lock:
+            self.pending_count += change
+            if not self.cancelled.is_set():
+                self.on_pending(self.pending_count)
+
     def _recognize(self, segments: queue.Queue, failed: threading.Event) -> None:
         try:
             while not self.cancelled.is_set() and not failed.is_set():
                 pcm = segments.get()
                 if pcm is None or self.cancelled.is_set() or failed.is_set():
                     break
-                # Only digital silence is skipped. Quiet speech is never gated.
-                if not any(pcm):
-                    continue
-                pcm = pcm.ljust(MIN_BYTES, b"\0")
-                result = opentalk.transcribe(pcm_to_wav(pcm))
-                if result and not self.cancelled.is_set() and not failed.is_set():
-                    self.on_chunk(result)
+                try:
+                    # Only digital silence is skipped. Quiet speech is never gated.
+                    if not any(pcm):
+                        continue
+                    pcm = pcm.ljust(MIN_BYTES, b"\0")
+                    result = opentalk.transcribe(pcm_to_wav(pcm))
+                    if result and not self.cancelled.is_set() and not failed.is_set():
+                        self.on_chunk(result)
+                finally:
+                    self._pending(-1)
         except Exception as exc:
             failed.set()
             if not self.cancelled.is_set():
@@ -176,6 +189,7 @@ class LiveDictation:
         last_meter = 0.0
         heard_signal = False
         warned = False
+        stream = None
         try:
             while not self.cancelled.is_set() and not failed.is_set():
                 if recorder.poll() is not None and not self.stop_requested.is_set():
@@ -186,9 +200,12 @@ class LiveDictation:
                 now = time.monotonic()
                 if available:
                     count = min(available, BYTES_PER_SECOND // 10)
-                    with path.open("rb") as stream:
-                        stream.seek(offset)
-                        pcm = stream.read(count)
+                    # Keep one unbuffered reader for the growing recording.
+                    # Close it before cleanup (required on Windows).
+                    if stream is None:
+                        stream = path.open("rb", buffering=0)
+                    stream.seek(offset)
+                    pcm = stream.read(count)
                     if len(pcm) != count:
                         time.sleep(0.05)
                         continue
@@ -202,6 +219,7 @@ class LiveDictation:
                         self.on_notice("Mikrofonsignal erkannt · Aufnahme läuft")
                         warned = False
                     for segment in segmenter.feed(pcm):
+                        self._pending(1)
                         segments.put(segment)
                     if offset >= opentalk.MAX_SECONDS * BYTES_PER_SECOND:
                         self.stop()
@@ -209,6 +227,7 @@ class LiveDictation:
                 if finished_recording:
                     tail = segmenter.finish()
                     if tail:
+                        self._pending(1)
                         segments.put(tail)
                     break
                 if not offset and now - started >= 8:
@@ -222,6 +241,8 @@ class LiveDictation:
             if not self.cancelled.is_set():
                 self.on_error(str(exc))
         finally:
+            if stream is not None:
+                stream.close()
             if self.timer is not None:
                 self.timer.cancel()
             try:

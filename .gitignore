@@ -12,3 +12,4 @@ build/
 dist/
 artifacts/
 *.egg-info/
+benchmarks/local/

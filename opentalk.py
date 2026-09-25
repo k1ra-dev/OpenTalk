@@ -210,6 +210,25 @@ def selected_model() -> str:
         return "small"
 
 
+def normalize_vocabulary(text: str) -> list[str]:
+    """Bound decoder context; hints are not automatic search/replace rules."""
+    terms = list(dict.fromkeys(" ".join(term.split()) for term in re.split(r"[,\n]", text)))
+    terms = [term for term in terms if term]
+    if len(terms) > 32 or len(", ".join(terms)) > 400:
+        raise ValueError("Bitte höchstens 32 Begriffe und insgesamt 400 Zeichen verwenden.")
+    return terms
+
+
+def vocabulary_prompt() -> str:
+    try:
+        terms = json.loads(settings_path().read_text(encoding="utf-8")).get("vocabulary", [])
+        if not isinstance(terms, list) or not all(isinstance(term, str) for term in terms):
+            return ""
+        return ", ".join(normalize_vocabulary("\n".join(terms)))
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
 def model_file(name: str) -> Path:
     if name not in MODEL_NAMES:
         raise ValueError("Unbekanntes Whisper-Modell.")
@@ -445,6 +464,9 @@ class PersistentWhisperServer:
                 "language": language,
                 "no_timestamps": "true",
                 "suppress_non_speech": "true",
+                # Send even the empty value: a persistent server must forget
+                # earlier hints after the user clears their dictionary.
+                "prompt": vocabulary_prompt(),
             },
         )
         request = urllib.request.Request(
@@ -606,6 +628,9 @@ def transcribe_local(data: bytes) -> str:
             config("WHISPER_THREADS", "4"),
         ]
         vad_model = vad_model_path()
+        prompt = vocabulary_prompt()
+        if prompt:
+            command.extend(["--prompt", prompt])
         if vad_model.is_file():
             command.extend(["--vad", "-vm", str(vad_model)])
         try:

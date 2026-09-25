@@ -14,6 +14,7 @@ import subprocess
 import sys
 import ctypes
 import threading
+from contextlib import suppress
 
 from PyQt6 import sip
 from PyQt6.QtCore import QLockFile, QMicrophonePermission, QPoint, QProcess, QRect, Qt, QTimer, QUrl, pyqtSignal, qVersion
@@ -21,6 +22,7 @@ from PyQt6.QtGui import QColor, QCursor, QDesktopServices, QKeySequence, QPainte
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
+    QInputDialog,
     QCheckBox,
     QHBoxLayout,
     QLabel,
@@ -35,6 +37,7 @@ from PyQt6.QtWidgets import (
 )
 
 import audio_sources
+import diagnostics
 from live_dictation import LiveDictation
 from hotkeys import HotkeyState
 import opentalk
@@ -342,6 +345,7 @@ def insert_into_target(value: str, target: str) -> str:
 
 
 class SetupDialog(QDialog):
+    diagnostics_ready = pyqtSignal(object)
     MODEL_LABELS = ("Tiny", "Base", "Small", "Medium", "Large v3")
     MODEL_SIZES = ("75 MiB", "142 MiB", "466 MiB", "1,5 GiB", "2,9 GiB")
 
@@ -403,6 +407,19 @@ class SetupDialog(QDialog):
         self.copy_button = QPushButton("Letztes Diktat kopieren")
         self.copy_button.clicked.connect(parent.copy_last_transcript)
         layout.addWidget(self.copy_button)
+        tools_row = QHBoxLayout()
+        self.check_button = QPushButton("System & Modell prüfen")
+        self.check_button.setToolTip("Lokaler Hardware-Scan und Modellempfehlung, ohne Aufnahme oder Download.")
+        self.check_button.clicked.connect(self.start_diagnostics)
+        self.vocabulary_button = QPushButton("Wörterbuch …")
+        self.vocabulary_button.setEnabled(not bool(opentalk.config("SERVER_URL")))
+        self.vocabulary_button.setToolTip("Optionale lokale Erkennungshinweise, keine Textersetzung.")
+        self.vocabulary_button.clicked.connect(self.edit_vocabulary)
+        tools_row.addWidget(self.check_button)
+        tools_row.addWidget(self.vocabulary_button)
+        layout.addLayout(tools_row)
+        self.diagnostics_ready.connect(self.finish_diagnostics)
+        self.check_running = False
         heading = QLabel("Whisper-Modell")
         heading.setObjectName("heading")
         layout.addWidget(heading)
@@ -462,6 +479,62 @@ class SetupDialog(QDialog):
         self.refresh_engine_info()
         self.hotkey_info.setText(parent.hotkey_status)
         self.refresh_permissions()
+
+    def edit_vocabulary(self) -> None:
+        if self.parent().engine is not None:
+            self.info.setText("Wörterbuch bitte nach dem laufenden Diktat ändern.")
+            return
+        text, accepted = QInputDialog.getMultiLineText(
+            self, "Persönliches Wörterbuch",
+            "Namen/Fachbegriffe, je Zeile oder durch Komma getrennt.\n"
+            "Max. 32 Begriffe / 400 Zeichen. Hinweise können auch Fehler begünstigen.\n"
+            "Leer lassen zum Deaktivieren; nur lokale Erkennung.",
+            opentalk.vocabulary_prompt().replace(", ", "\n"),
+        )
+        if accepted:
+            if self.parent().engine is not None:
+                self.info.setText("Diktat läuft inzwischen · Wörterbuch bitte danach speichern.")
+                return
+            try:
+                terms = opentalk.normalize_vocabulary(text)
+                save_setting("vocabulary", terms)
+                self.info.setText(f"Wörterbuch gespeichert: {len(terms)} Begriff(e).")
+            except (ValueError, OSError) as exc:
+                self.info.setText(str(exc))
+
+    def start_diagnostics(self) -> None:
+        if self.check_running or self.operation:
+            return
+        if self.parent().engine is not None:
+            self.info.setText("Systemprüfung bitte nach dem laufenden Diktat starten.")
+            return
+        self.check_running = True
+        self.check_button.setEnabled(False)
+        # Qt permission APIs and listener state are read on their owning thread.
+        notes = ["Hotkey: " + (self.parent().hotkey_status or "nicht registriert")]
+        if platform.system() == "Darwin":
+            notes.append("Mikrofonzugriff: " + ("verweigert" if microphone_denied()
+                         else "nicht als verweigert gemeldet; Aufnahme nicht getestet"))
+            notes.append("Bedienungshilfen: " + ("erlaubt" if macos_accessibility_trusted()
+                         else "nicht erlaubt"))
+        self.info.setText("Systemprüfung läuft · keine Aufnahme …")
+
+        def check():
+            try:
+                result = diagnostics.check_system()
+            except Exception:
+                result = ["Systemprüfung fehlgeschlagen; Installation prüfen."]
+            self.diagnostics_ready.emit([*notes, *result])
+
+        threading.Thread(target=check, daemon=True).start()
+
+    def finish_diagnostics(self, lines: list[str]) -> None:
+        self.check_running = False
+        self.check_button.setEnabled(True)
+        self.log.setPlainText("\n".join(lines))
+        self.log.show()
+        recommendation = next((line for line in lines if line.startswith("MODELL ·")), "")
+        self.info.setText(recommendation or "Systemprüfung abgeschlossen · Details unten (ohne Aufnahme).")
 
     def apply_hold_mode(self, enabled: bool) -> None:
         try:
@@ -583,7 +656,7 @@ class SetupDialog(QDialog):
             self.install_button.setEnabled(not self.operation)
 
     def start_install(self) -> None:
-        if self.operation:
+        if self.operation or self.check_running:
             return
         self.operation = "setup"
         self.install_button.setEnabled(False)
@@ -598,7 +671,7 @@ class SetupDialog(QDialog):
 
     def download_model(self) -> None:
         name = self.chosen_model()
-        if self.operation or self.model_locked or opentalk.model_available(name):
+        if self.operation or self.check_running or self.model_locked or opentalk.model_available(name):
             return
         self.operation = name
         self.slider.setEnabled(False)
@@ -664,6 +737,8 @@ class Overlay(QWidget):
     start_ready = pyqtSignal(object, str)
     insertion_ready = pyqtSignal(str)
     sources_ready = pyqtSignal(object, str)
+    cursor_ready = pyqtSignal(object)
+    backlog_ready = pyqtSignal(object, int)
 
     def __init__(self):
         super().__init__()
@@ -723,6 +798,12 @@ class Overlay(QWidget):
         self.pending_parts: list[str] = []
         self.clipboard_only = False
         self.drag_offset: QPoint | None = None
+        self.cursor_query_running = False
+        self.audio_pending = 0
+        self.cached_cursor = None
+        self.drag_needs_origin = False
+        self.cursor_ready.connect(self.on_cursor_ready)
+        self.backlog_ready.connect(self.on_backlog)
         self.press_point: QPoint | None = None
         self.ignore_release = False
         self.drag_timer = QTimer(self)
@@ -958,28 +1039,42 @@ class Overlay(QWidget):
             self.move(geometry.x() + x, geometry.y() + y)
 
     def cursor_position(self) -> QPoint:
-        if self.layer_shell and shutil.which("hyprctl"):
-            try:
-                result = subprocess.run(
-                    ["hyprctl", "cursorpos", "-j"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    timeout=0.3,
-                )
-                point = json.loads(result.stdout)
-                return QPoint(point["x"], point["y"])
-            except (
-                OSError,
-                ValueError,
-                KeyError,
-                subprocess.CalledProcessError,
-                subprocess.TimeoutExpired,
-            ):
-                pass
-        return QCursor.pos()
+        if self.layer_shell and not self.cursor_query_running and shutil.which("hyprctl"):
+            self.cursor_query_running = True
+            threading.Thread(target=self.query_cursor, daemon=True).start()
+        return self.cached_cursor if self.layer_shell and self.cached_cursor is not None else QCursor.pos()
+
+    def query_cursor(self) -> None:
+        # One bounded request at a time; never wait for the compositor on Qt's thread.
+        point = None
+        try:
+            result = subprocess.run(
+                ["hyprctl", "cursorpos", "-j"], capture_output=True,
+                text=True, check=True, timeout=0.3,
+            )
+            value = json.loads(result.stdout)
+            if type(value["x"]) is int and type(value["y"]) is int:
+                point = QPoint(value["x"], value["y"])
+        except (OSError, ValueError, KeyError, TypeError, OverflowError, subprocess.SubprocessError):
+            pass
+        if not self.closing:
+            # Window may have been destroyed during the query.
+            with suppress(RuntimeError):
+                self.cursor_ready.emit(point)
+
+    def on_cursor_ready(self, point) -> None:
+        self.cursor_query_running = False
+        if self.closing:
+            return
+        self.cached_cursor = point
+        if point is None:
+            self.drag_needs_origin = False
+        if point is not None and self.drag_needs_origin and self.drag_offset is not None:
+            self.drag_offset = point - self.current_screen().geometry().topLeft() - self.anchor
+            self.drag_needs_origin = False
 
     def begin_drag(self) -> None:
+        self.drag_needs_origin = bool(self.layer_shell and shutil.which("hyprctl"))
         screen = self.current_screen()
         self.drag_offset = self.cursor_position() - screen.geometry().topLeft() - self.anchor
         self.click_timer.stop()
@@ -991,6 +1086,8 @@ class Overlay(QWidget):
         if self.drag_offset is None:
             return
         point = self.cursor_position()
+        if self.drag_needs_origin:
+            return
         screen = QApplication.screenAt(point)
         if screen is None:
             return
@@ -1010,6 +1107,7 @@ class Overlay(QWidget):
         self.releaseMouse()
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.drag_offset = None
+        self.drag_needs_origin = False
         try:
             save_setting("position", {"x": self.anchor.x(), "y": self.anchor.y()})
         except OSError:
@@ -1065,6 +1163,18 @@ class Overlay(QWidget):
             painter.drawArc(center.x() - 12, center.y() - 8, 24, 25, 180 * 16, 180 * 16)
             painter.drawLine(center.x(), center.y() + 11, center.x(), center.y() + 18)
             painter.drawLine(center.x() - 7, center.y() + 18, center.x() + 7, center.y() + 18)
+        if self.engine is not None and self.state != "error" and (
+            self.audio_pending > 1 or (self.audio_pending and not self.engine.recording)
+        ):
+            badge = QRect(rect.right() - 19, rect.top(), 20, 20)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#223a4d"))
+            painter.drawEllipse(badge)
+            painter.setPen(QColor("#f8fbff"))
+            font = painter.font()
+            font.setPixelSize(10)
+            painter.setFont(font)
+            painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, str(self.audio_pending))
 
     def mousePressEvent(self, event) -> None:
         if not self.main_rect().contains(event.position().toPoint()):
@@ -1172,6 +1282,7 @@ class Overlay(QWidget):
             self.mic_level = 0.0
             self.state = "processing"
             self.set_status("Letzte Wörter werden erkannt …")
+            self.on_backlog(self.engine, self.audio_pending)
             self.update()
             return
         # The worker can finish before Qt delivers its final queued signals.
@@ -1199,6 +1310,7 @@ class Overlay(QWidget):
             self.set_status("Zuerst ein Textfeld in einem Fenster aktivieren.", error=True)
             return
         self.output_started = False
+        self.audio_pending = 0
         self.pending_parts = []
         self.clipboard_only = False
         self.engine = LiveDictation(
@@ -1208,6 +1320,7 @@ class Overlay(QWidget):
             source=self.source,
             on_level=self.level_ready.emit,
             on_notice=self.notice_ready.emit,
+            on_pending=lambda count: self.backlog_ready.emit(engine, count),
         )
         opentalk.LOCAL_WHISPER_SERVER.begin_session()
         self.local_session = True
@@ -1231,6 +1344,17 @@ class Overlay(QWidget):
             self.start_ready.emit(engine, error)
 
         threading.Thread(target=start, daemon=True).start()
+
+    def on_backlog(self, engine, count: int) -> None:
+        if self.closing or self.engine is not engine or self.state == "error":
+            return
+        self.audio_pending = count
+        self.update()
+        if count and (count > 1 or not engine.recording):
+            prefix = "Aufnahme läuft" if engine.recording else "Erkennung läuft"
+            self.set_status(f"{prefix} · {count} Audioabschnitt(e) noch offen")
+        elif engine.recording and not self.inserting and not self.deferred_text:
+            self.set_status("Aufnahme läuft · Klick zum Stoppen")
 
     def on_started(self, engine: LiveDictation, error: str) -> None:
         if self.closing or self.engine is not engine:

@@ -33,6 +33,133 @@ class GuiHelperTests(unittest.TestCase):
         self.addCleanup(overlay.close)
         return overlay
 
+    def make_setup(self):
+        overlay = self.make_overlay()
+        dialog = opentalk_gui.SetupDialog(overlay)
+        overlay.setup_dialog = dialog
+        return dialog
+
+    def test_cursor_query_never_blocks_gui_or_overlaps(self):
+        overlay = self.make_overlay()
+        overlay.layer_shell = True
+        entered, release = threading.Event(), threading.Event()
+
+        def query(*args, **kwargs):
+            entered.set()
+            release.wait(2)
+            return Mock(stdout='{"x": 123, "y": 456}')
+
+        with patch.object(opentalk_gui.shutil, "which", return_value="hyprctl"), patch.object(
+            opentalk_gui.subprocess, "run", side_effect=query
+        ) as run:
+            try:
+                overlay.cursor_position()
+                self.assertTrue(entered.wait(1))
+                for _ in range(5):
+                    overlay.cursor_position()
+                run.assert_called_once()
+                self.assertTrue(overlay.cursor_query_running)
+            finally:
+                release.set()
+            self.wait_until(lambda: not overlay.cursor_query_running)
+            self.assertEqual(overlay.cached_cursor.x(), 123)
+            self.assertEqual(overlay.cached_cursor.y(), 456)
+        overlay.layer_shell = False
+
+    def test_cursor_failure_clears_pending_request(self):
+        overlay = self.make_overlay()
+        overlay.cursor_query_running = True
+        with patch.object(opentalk_gui.subprocess, "run", return_value=Mock(stdout='[]')):
+            overlay.query_cursor()
+        self.assertFalse(overlay.cursor_query_running)
+        self.assertIsNone(overlay.cached_cursor)
+
+    def test_backlog_ignores_old_session_and_errors(self):
+        overlay = self.make_overlay()
+        engine = Mock(recording=True)
+        overlay.engine = engine
+        with patch.object(overlay, "set_status") as status:
+            overlay.on_backlog(engine, 3)
+            self.assertIn("3 Audioabschnitt", status.call_args.args[0])
+            engine.recording = False
+            overlay.on_backlog(engine, 1)
+            self.assertIn("Erkennung läuft", status.call_args.args[0])
+            status.reset_mock()
+            overlay.on_backlog(Mock(), 5)
+            overlay.state = "error"
+            overlay.on_backlog(engine, 5)
+            status.assert_not_called()
+
+    def test_system_check_runs_once_in_background_and_restores_button(self):
+        dialog = self.make_setup()
+        entered, release = threading.Event(), threading.Event()
+
+        def check():
+            entered.set()
+            release.wait(3)
+            return ["OK · Test", "Nicht geprüft: Aufnahme"]
+
+        with patch.object(opentalk_gui.diagnostics, "check_system", side_effect=check) as run:
+            try:
+                dialog.start_diagnostics()
+                self.assertTrue(entered.wait(1))
+                dialog.start_diagnostics()
+                dialog.start_install()
+                self.assertIsNone(dialog.operation)
+                self.assertFalse(dialog.check_button.isEnabled())
+                run.assert_called_once()
+            finally:
+                release.set()
+            self.wait_until(lambda: not dialog.check_running)
+            self.assertTrue(dialog.check_button.isEnabled())
+            self.assertIn("Nicht geprüft: Aufnahme", dialog.log.toPlainText())
+
+    def test_system_check_failure_restores_controls(self):
+        dialog = self.make_setup()
+        with patch.object(opentalk_gui.diagnostics, "check_system", side_effect=OSError("private")):
+            dialog.start_diagnostics()
+            self.wait_until(lambda: not dialog.check_running)
+            self.assertIn("fehlgeschlagen", dialog.log.toPlainText())
+            self.assertNotIn("private", dialog.log.toPlainText())
+            self.assertTrue(dialog.check_button.isEnabled())
+
+    def test_model_recommendation_is_visible_without_changing_selected_model(self):
+        dialog = self.make_setup()
+        previous = dialog.slider.value()
+        with patch.object(opentalk_gui, "save_setting") as save:
+            dialog.finish_diagnostics(["MODELL · Empfehlung: medium (Einschätzung für Live-Diktat)."])
+            self.assertIn("Empfehlung: medium", dialog.info.text())
+            self.assertEqual(dialog.slider.value(), previous)
+            save.assert_not_called()
+
+    def test_vocabulary_editor_validates_and_does_not_save_on_cancel(self):
+        dialog = self.make_setup()
+        with (
+            patch.object(opentalk_gui.QInputDialog, "getMultiLineText", return_value=("Kira\nOpenTalk", True)),
+            patch.object(opentalk_gui, "save_setting") as save,
+        ):
+            dialog.edit_vocabulary()
+            save.assert_called_once_with("vocabulary", ["Kira", "OpenTalk"])
+        for text, accepted in (("a" * 401, True), ("ignored", False)):
+            with (
+                patch.object(opentalk_gui.QInputDialog, "getMultiLineText", return_value=(text, accepted)),
+                patch.object(opentalk_gui, "save_setting") as save,
+            ):
+                dialog.edit_vocabulary()
+                save.assert_not_called()
+
+    def test_new_tools_do_not_interfere_with_active_recording(self):
+        dialog = self.make_setup()
+        dialog.parent().engine = Mock(recording=True)
+        with (
+            patch.object(opentalk_gui.QInputDialog, "getMultiLineText") as edit,
+            patch.object(opentalk_gui.diagnostics, "check_system") as check,
+        ):
+            dialog.edit_vocabulary()
+            dialog.start_diagnostics()
+            edit.assert_not_called()
+            check.assert_not_called()
+
     def wait_until(self, condition, timeout=3):
         deadline = time.monotonic() + timeout
         while not condition() and time.monotonic() < deadline:

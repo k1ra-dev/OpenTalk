@@ -17,6 +17,13 @@ Dieses Projekt ist eine frühe Vorschau. Bitte beschreibe bei Fehlern das Betrie
 
 ## Testbereiche
 
+- `tests/test_model_recommendation.py`: native Hardware-Abfragen, Ressourcen-Grenzen,
+  Speicherdruck, fehlende Daten und konservative Modellempfehlungen
+
+- `tests/test_new_tools.py`: Wörterbuch-Hinweise, nicht-invasive Systemprüfung und Benchmark-Auswertung
+- Erkennungsänderungen zusätzlich mit dem lokalen Vergleich in `benchmarks/README.md` prüfen;
+  simulierte CI-Ergebnisse sind kein Nachweis tatsächlicher Spracherkennungsqualität.
+
 - `tests/test_core.py`: Audio-Validierung sowie lokale und Server-Transkription
 - `tests/test_live_dictation.py`: Aufnahme-Lebenszyklus, Chunking, Abbruch und Fehlerfälle
 - `tests/test_audio_processing.py`: verlustfreie Pausenschnitte, Pegel und leise Schlusswörter

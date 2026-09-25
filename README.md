@@ -18,6 +18,8 @@ Hotkey / Click → Speak → Stop → Text lands in the focused window ✨
 - 🎚️ **Model switcher in the GUI** — tiny, base, small, medium, large-v3 (75 MiB – 2.9 GiB), with checksum-verified downloads
 - 🎙️ **Microphone picker** — choose a PipeWire, macOS, or Windows input in the UI
 - 🟢 **Live microphone level** — a small ring on the recording bubble, with missing-signal and permission hints
+- **Recognition backlog** — a small count on the bubble shows queued/in-progress audio sections when recognition falls behind, including remaining work after stopping. This is not a time estimate or a count of pending text insertions.
+- **Responsive Hyprland dragging** — cursor queries run off the UI thread, with a timeout and at most one request in flight.
 - 🧠 **VAD segmentation** — optional Silero voice-activity detection splits speech cleanly
 - 🔒 **Privacy first** — recognition runs locally on whisper.cpp; optional self-hosted server mode with token auth
 - ⌨️ **Native text insertion** — Wayland tools, macOS Cmd+V, or Windows Ctrl+V
@@ -257,6 +259,31 @@ On Windows, the automatic microphone choice uses the first detected DirectShow i
 specific microphone in the picker if needed.
 
 ### Choosing a model
+
+**Settings → System & Modell prüfen** checks installed helpers, model presence, microphone discovery
+and the current hotkey/permission status in the background. It never records or types anything;
+the report explicitly lists checks that require a real dictation. No diagnostic report is saved.
+
+It also scans RAM, logical CPU count and architecture locally, then recommends a model for
+live dictation, with an explanation. Nothing is downloaded or selected automatically. This is
+a conservative heuristic, **not a measured speed/accuracy ranking**: Apple Silicon with at
+least 24 GiB RAM and 8 logical cores suggests `medium`; smaller M-Macs generally suggest
+`small`. CPU-only estimates suggest `small` from 16 GiB/8 cores, `base` from 8 GiB/4 cores,
+otherwise `tiny`. Low available RAM on Linux/Windows reduces the recommendation. GPU support
+in the installed backend is not verified; Windows/Linux GPUs are not counted. Unknown RAM
+or CPU count produces no recommendation. Apple Silicon is identified as Metal-capable, not
+as a verified active Metal backend. `large-v3` is an optional slower alternative on high-memory
+M-Macs, not the default for live latency. These thresholds reserve headroom and are our own
+rules, not [whisper.cpp's model memory requirements](https://github.com/ggml-org/whisper.cpp#memory-usage).
+Home-server mode deliberately does not infer the server's best model from the client's hardware.
+
+**Settings → Wörterbuch …** accepts up to 32 names/technical terms (400 characters total).
+They are stored locally and supplied as optional Whisper context, not as automatic text
+replacements. Clear the field to disable them. Hints can also bias recognition incorrectly;
+compare with and without them. This option is disabled in home-server mode.
+
+For repeatable local speed/accuracy comparisons with your own recordings, see
+[the benchmark instructions](benchmarks/README.md). Reports contain metrics, not transcripts.
 
 Double-click the bubble → ⚙: slide between **tiny → large-v3**. Installed models activate
 instantly; missing ones can be downloaded in the same window (checksum-verified before use).

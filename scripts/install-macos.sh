@@ -52,7 +52,7 @@ cp "$project_dir/scripts/source-launcher.py" "$app_bundle/Contents/Resources/sou
 cp "$project_dir/opentalk.py" "$project_dir/opentalk_gui.py" \
    "$project_dir/audio_sources.py" "$project_dir/live_dictation.py" \
    "$project_dir/audio_processing.py" "$project_dir/hotkeys.py" \
-   "$project_dir/model_setup.py" "$app_source/"
+   "$project_dir/model_setup.py" "$project_dir/diagnostics.py" "$app_source/"
 cp "$project_dir/scripts/gui.sh" "$project_dir/scripts/setup-model.sh" \
    "$project_dir/scripts/download-model.sh" "$project_dir/scripts/python.sh" "$app_source/scripts/"
 if [ -f "$project_dir/config.local.sh" ]; then
