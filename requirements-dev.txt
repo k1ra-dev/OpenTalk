@@ -1,0 +1,5 @@
+-r requirements.txt
+ruff>=0.11,<1
+pyinstaller>=6.12,<7
+# Release builds bundle FFmpeg on macOS and Windows.
+imageio-ffmpeg>=0.6,<0.7; sys_platform == "darwin"

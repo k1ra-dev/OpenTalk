@@ -4,6 +4,7 @@ import platform
 
 root = Path(SPECPATH).parent
 whisper_cli = os.environ.get("WHISPER_CLI_BINARY", "")
+whisper_server = os.environ.get("WHISPER_SERVER_BINARY", "")
 ffmpeg = os.environ.get("FFMPEG_BINARY", "")
 
 if not whisper_cli or not Path(whisper_cli).is_file():
@@ -15,15 +16,17 @@ if platform.system() in ("Darwin", "Windows"):
         if platform.system() == "Darwin":
             raise SystemExit("Das macOS-Release darf nur auf arm64 gebaut werden")
     if not ffmpeg or not Path(ffmpeg).is_file():
-        raise SystemExit("FFMPEG_BINARY fehlt für das macOS-Release")
+        raise SystemExit("FFMPEG_BINARY fehlt für das macOS-/Windows-Release")
     binaries.append((ffmpeg, "bin"))
+if not whisper_server or not Path(whisper_server).is_file():
+    raise SystemExit("WHISPER_SERVER_BINARY fehlt für das Release")
+binaries.append((whisper_server, "bin"))
 
 datas = [
-    (str(root / "scripts" / "setup-model.sh"), "scripts"),
-    (str(root / "scripts" / "download-model.sh"), "scripts"),
     (str(root / "assets" / "opentalk.svg"), "assets"),
     (str(root / "README.md"), "."),
     (str(root / "LICENSE"), "."),
+    (str(root / "layer_shell_bridge.cpp"), "."),
 ]
 
 hotkey_backend = {
@@ -38,6 +41,9 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=[hotkey_backend] if hotkey_backend else [],
+    # Source Windows installs use imageio's FFmpeg. Releases already carry the
+    # same executable in bin/; excluding the fallback avoids a second full copy.
+    excludes=["imageio_ffmpeg"],
 )
 pyz = PYZ(a.pure)
 exe = EXE(
@@ -73,7 +79,7 @@ if platform.system() == "Darwin":
         bundle_identifier="dev.k1ra.opentalk",
         info_plist={
             "CFBundleDisplayName": "OpenTalk",
-            "LSMinimumSystemVersion": "12.0",
+            "LSMinimumSystemVersion": "13.3",
             "LSUIElement": True,
             "NSMicrophoneUsageDescription":
                 "OpenTalk benötigt das Mikrofon für die lokale Spracheingabe.",

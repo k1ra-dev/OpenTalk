@@ -12,16 +12,22 @@ if (-not $env:WHISPER_CLI_BINARY -or -not (Test-Path $env:WHISPER_CLI_BINARY)) {
 if (-not $env:FFMPEG_BINARY -or -not (Test-Path $env:FFMPEG_BINARY)) {
     throw "FFMPEG_BINARY muss auf ffmpeg.exe zeigen."
 }
+if (-not $env:WHISPER_SERVER_BINARY -or -not (Test-Path $env:WHISPER_SERVER_BINARY)) {
+    throw "WHISPER_SERVER_BINARY muss auf whisper-server.exe zeigen."
+}
 
-Remove-Item -Recurse -Force build/OpenTalk, build/OpenTalk-binaries, dist/OpenTalk, artifacts `
+Remove-Item -Recurse -Force build/OpenTalk, build/OpenTalk-binaries, dist/OpenTalk `
     -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force build/OpenTalk-binaries, artifacts | Out-Null
 Copy-Item $env:WHISPER_CLI_BINARY build/OpenTalk-binaries/whisper-cli.exe
+Copy-Item $env:WHISPER_SERVER_BINARY build/OpenTalk-binaries/whisper-server.exe
 Copy-Item $env:FFMPEG_BINARY build/OpenTalk-binaries/ffmpeg.exe
 $env:WHISPER_CLI_BINARY = Join-Path $projectDir "build/OpenTalk-binaries/whisper-cli.exe"
+$env:WHISPER_SERVER_BINARY = Join-Path $projectDir "build/OpenTalk-binaries/whisper-server.exe"
 $env:FFMPEG_BINARY = Join-Path $projectDir "build/OpenTalk-binaries/ffmpeg.exe"
 $env:PYINSTALLER_CONFIG_DIR = Join-Path $env:TEMP "opentalk-pyinstaller-cache"
 
 python -m PyInstaller --clean --noconfirm packaging/OpenTalk.spec
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller ist fehlgeschlagen." }
 Compress-Archive -Path dist/OpenTalk -DestinationPath artifacts/OpenTalk-Windows-x86_64.zip -Force
 Get-Item artifacts/OpenTalk-Windows-x86_64.zip | Format-List Name, Length

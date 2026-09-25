@@ -7,6 +7,8 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$project_dir/scripts/python.sh"
+"$OPENTALK_PYTHON" -c 'import PyQt6.QtWidgets; import importlib.util; assert importlib.util.find_spec("pynput"), "pynput fehlt (siehe README)"'
 data_home=${XDG_DATA_HOME:-"$HOME/.local/share"}
 app_dir="$data_home/opentalk/app"
 applications_dir="$data_home/applications"
@@ -15,9 +17,11 @@ icons_dir="$data_home/icons/hicolor/scalable/apps"
 mkdir -p "$app_dir/scripts" "$app_dir/build" "$applications_dir" "$icons_dir"
 cp "$project_dir/opentalk.py" "$project_dir/opentalk_gui.py" \
    "$project_dir/audio_sources.py" "$project_dir/live_dictation.py" "$project_dir/model_setup.py" \
+   "$project_dir/audio_processing.py" "$project_dir/hotkeys.py" \
    "$project_dir/layer_shell_bridge.cpp" "$app_dir/"
 cp "$project_dir/scripts/gui.sh" "$project_dir/scripts/setup-model.sh" \
-   "$project_dir/scripts/download-model.sh" "$app_dir/scripts/"
+   "$project_dir/scripts/download-model.sh" "$project_dir/scripts/python.sh" "$app_dir/scripts/"
+"$OPENTALK_PYTHON" -c 'import sys; print(sys.executable)' > "$app_dir/.python-path"
 if [ -f "$project_dir/config.local.sh" ]; then
     cp "$project_dir/config.local.sh" "$app_dir/config.local.sh"
     chmod 600 "$app_dir/config.local.sh"
@@ -36,7 +40,7 @@ Type=Application
 Name=OpenTalk
 GenericName=Spracheingabe
 Comment=Lokale Spracheingabe direkt ins Textfeld
-Exec=$app_dir/scripts/gui.sh
+Exec="$app_dir/scripts/gui.sh"
 Path=$app_dir
 Icon=opentalk
 Terminal=false

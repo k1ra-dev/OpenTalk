@@ -2,6 +2,7 @@
 # Optional: eigene Installation statt der Einrichtung über die Oberfläche.
 # export OPENTALK_MODEL="$HOME/whisper.cpp/models/ggml-small.bin"
 # export OPENTALK_WHISPER_CLI="$HOME/whisper.cpp/build/bin/whisper-cli"
+# export OPENTALK_WHISPER_SERVER="$HOME/whisper.cpp/build/bin/whisper-server"
 # export OPENTALK_VAD_MODEL="$HOME/whisper.cpp/models/ggml-silero-v6.2.0.bin"
 # Optional: eigener FFmpeg-Pfad auf macOS (Release-App bringt FFmpeg bereits mit).
 # export OPENTALK_FFMPEG="/opt/homebrew/bin/ffmpeg"

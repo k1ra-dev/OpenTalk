@@ -2,17 +2,21 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "OpenTalk GUI debuggen",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/opentalk_gui.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
       "name": "Desktop-Dienst debuggen",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/opentalk.py",
       "args": ["daemon"],
       "console": "integratedTerminal",
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "OPENTALK_MODEL": "${env:HOME}/whisper.cpp/models/ggml-small.bin",
-        "OPENTALK_WHISPER_CLI": "${env:HOME}/whisper.cpp/build/bin/whisper-cli"
-      }
+      "cwd": "${workspaceFolder}"
     },
     {
       "name": "Server debuggen",
@@ -21,11 +25,7 @@
       "program": "${workspaceFolder}/opentalk.py",
       "args": ["serve"],
       "console": "integratedTerminal",
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "OPENTALK_MODEL": "${env:HOME}/whisper.cpp/models/ggml-small.bin",
-        "OPENTALK_WHISPER_CLI": "${env:HOME}/whisper.cpp/build/bin/whisper-cli"
-      }
+      "cwd": "${workspaceFolder}"
     }
   ]
 }

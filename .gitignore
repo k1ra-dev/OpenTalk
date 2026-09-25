@@ -4,6 +4,9 @@ __pycache__/
 .pytest_cache/
 .coverage
 config.local.sh
+config.local.ps1
+.python-path
+.ruff_cache/
 *.wav
 build/
 dist/

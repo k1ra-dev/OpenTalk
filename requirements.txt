@@ -1,0 +1,4 @@
+# Runtime dependencies for a source checkout (Python 3.10+).
+PyQt6>=6.5,<6.12
+pynput>=1.7.6,<2
+imageio-ffmpeg>=0.6,<0.7; sys_platform == "win32"

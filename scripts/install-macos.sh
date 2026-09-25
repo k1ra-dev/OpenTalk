@@ -1,5 +1,9 @@
 #!/bin/sh
 set -eu
+case "${1:-}" in
+    ""|--dev) ;;
+    *) echo "Verwendung: $0 [--dev]" >&2; exit 2 ;;
+esac
 
 if [ "$(uname -s)-$(uname -m)" != "Darwin-arm64" ]; then
     echo "Dieser Installer ist ausschließlich für Macs mit M-Prozessor (Apple Silicon)." >&2
@@ -44,11 +48,13 @@ venv="$data_dir/venv"
 app_bundle="$HOME/Applications/OpenTalk.app"
 
 mkdir -p "$app_source/scripts" "$app_bundle/Contents/MacOS" "$app_bundle/Contents/Resources"
+cp "$project_dir/scripts/source-launcher.py" "$app_bundle/Contents/Resources/source-launcher.py"
 cp "$project_dir/opentalk.py" "$project_dir/opentalk_gui.py" \
    "$project_dir/audio_sources.py" "$project_dir/live_dictation.py" \
+   "$project_dir/audio_processing.py" "$project_dir/hotkeys.py" \
    "$project_dir/model_setup.py" "$app_source/"
 cp "$project_dir/scripts/gui.sh" "$project_dir/scripts/setup-model.sh" \
-   "$project_dir/scripts/download-model.sh" "$app_source/scripts/"
+   "$project_dir/scripts/download-model.sh" "$project_dir/scripts/python.sh" "$app_source/scripts/"
 if [ -f "$project_dir/config.local.sh" ]; then
     cp "$project_dir/config.local.sh" "$app_source/config.local.sh"
     chmod 600 "$app_source/config.local.sh"
@@ -57,13 +63,17 @@ fi
 if [ ! -x "$venv/bin/python" ]; then
     "$python_bin" -m venv "$venv"
 fi
-"$venv/bin/python" -m pip install --upgrade PyQt6 pynput
+"$venv/bin/python" -m pip install -r "$project_dir/requirements.txt"
+if [ "${1:-}" = --dev ]; then
+    app_source=$project_dir
+fi
 
 launcher="$app_bundle/Contents/MacOS/OpenTalk"
 cat > "$launcher" <<EOF
 #!/bin/sh
 export PATH="$brew_prefix/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-exec "$venv/bin/python" "$app_source/opentalk_gui.py"
+export OPENTALK_PYTHON="$venv/bin/python"
+exec "$venv/bin/python" "$app_bundle/Contents/Resources/source-launcher.py" "$app_source"
 EOF
 chmod +x "$launcher" "$app_source/scripts/"*.sh
 
@@ -76,10 +86,16 @@ cat > "$app_bundle/Contents/Info.plist" <<'EOF'
   <key>CFBundleIdentifier</key><string>dev.k1ra.opentalk</string>
   <key>CFBundleExecutable</key><string>OpenTalk</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>LSMinimumSystemVersion</key><string>13.3</string>
   <key>LSUIElement</key><true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>OpenTalk benötigt das Mikrofon für die lokale Spracheingabe.</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>Der Entwickler-Starter liest den OpenTalk-Quellcode aus deinem Projektordner.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Der Entwickler-Starter liest den OpenTalk-Quellcode aus deinem Projektordner.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>Der Entwickler-Starter liest den OpenTalk-Quellcode aus deinem Projektordner.</string>
 </dict></plist>
 EOF
 

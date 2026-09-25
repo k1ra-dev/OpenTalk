@@ -18,13 +18,21 @@ if [ "$package" = mac ] && { [ -z "${FFMPEG_BINARY:-}" ] || [ ! -x "$FFMPEG_BINA
     echo "FFMPEG_BINARY muss beim Mac-Build auf ein ausführbares FFmpeg zeigen." >&2
     exit 1
 fi
+if [ -z "${WHISPER_SERVER_BINARY:-}" ] || [ ! -x "$WHISPER_SERVER_BINARY" ]; then
+    echo "WHISPER_SERVER_BINARY muss auf whisper-server zeigen." >&2
+    exit 1
+fi
 
-rm -rf build/OpenTalk build/OpenTalk-binaries dist/OpenTalk dist/OpenTalk.app artifacts
+rm -rf build/OpenTalk build/OpenTalk-binaries dist/OpenTalk dist/OpenTalk.app
 mkdir -p artifacts build/OpenTalk-binaries
 cp "$WHISPER_CLI_BINARY" build/OpenTalk-binaries/whisper-cli
 chmod +x build/OpenTalk-binaries/whisper-cli
 WHISPER_CLI_BINARY="$project_dir/build/OpenTalk-binaries/whisper-cli"
 export WHISPER_CLI_BINARY
+cp "$WHISPER_SERVER_BINARY" build/OpenTalk-binaries/whisper-server
+chmod +x build/OpenTalk-binaries/whisper-server
+WHISPER_SERVER_BINARY="$project_dir/build/OpenTalk-binaries/whisper-server"
+export WHISPER_SERVER_BINARY
 if [ "$package" = mac ]; then
     cp "$FFMPEG_BINARY" build/OpenTalk-binaries/ffmpeg
     chmod +x build/OpenTalk-binaries/ffmpeg

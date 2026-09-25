@@ -11,4 +11,5 @@ case "${XDG_CURRENT_DESKTOP:-}" in
         fi
         ;;
 esac
-exec python3 "$project_dir/opentalk_gui.py"
+. "$project_dir/scripts/python.sh"
+exec "$OPENTALK_PYTHON" "$project_dir/opentalk_gui.py"

@@ -3,16 +3,18 @@
   "tasks": [
     {
       "label": "Tests ausführen",
-      "type": "shell",
-      "command": "python3 -m unittest discover -s . -p 'test_*.py' -v",
+      "type": "process",
+      "command": "${command:python.interpreterPath}",
+      "args": ["-m", "unittest", "discover", "-s", "tests", "-v"],
       "options": {"cwd": "${workspaceFolder}"},
       "group": {"kind": "test", "isDefault": true},
       "problemMatcher": []
     },
     {
-      "label": "Spracheingabe umschalten",
-      "type": "shell",
-      "command": "${workspaceFolder}/scripts/start.sh",
+      "label": "OpenTalk starten",
+      "type": "process",
+      "command": "${command:python.interpreterPath}",
+      "args": ["${workspaceFolder}/opentalk_gui.py"],
       "problemMatcher": []
     }
   ]

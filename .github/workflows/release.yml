@@ -1,6 +1,7 @@
 name: Build release apps
 
 on:
+  pull_request:
   push:
     branches:
       - main
@@ -9,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   WHISPER_CPP_VERSION: v1.9.4
@@ -25,8 +26,10 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake ninja-build
-          python -m pip install pyinstaller PyQt6 pynput
+          sudo apt-get install -y cmake ninja-build libegl1 libopengl0
+          python -m pip install -r requirements-dev.txt
+      - name: Static analysis
+        run: python -m ruff check .
       - name: Test
         run: python -m unittest discover -s . -p 'test_*.py' -v
       - name: Build whisper.cpp
@@ -34,11 +37,14 @@ jobs:
           git clone --depth 1 --branch "$WHISPER_CPP_VERSION" https://github.com/ggml-org/whisper.cpp.git build/whisper.cpp
           cmake -S build/whisper.cpp -B build/whisper.cpp/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF
-          cmake --build build/whisper.cpp/build --target whisper-cli
+          cmake --build build/whisper.cpp/build --target whisper-cli whisper-server
       - name: Package Linux app
         env:
           WHISPER_CLI_BINARY: ${{ github.workspace }}/build/whisper.cpp/build/bin/whisper-cli
+          WHISPER_SERVER_BINARY: ${{ github.workspace }}/build/whisper.cpp/build/bin/whisper-server
         run: ./scripts/build-release.sh
+      - name: Check packaged helpers
+        run: python scripts/smoke-release.py
       - uses: actions/upload-artifact@v4
         with:
           name: linux-release
@@ -53,10 +59,14 @@ jobs:
           python-version: "3.13"
       - name: Verify Apple Silicon runner
         run: test "$(uname -m)" = arm64
+      - name: Set macOS deployment target
+        run: echo "MACOSX_DEPLOYMENT_TARGET=13.3" >> "$GITHUB_ENV"
       - name: Install build tools
         run: |
           brew install cmake ninja
-          python -m pip install pyinstaller PyQt6 imageio-ffmpeg pynput
+          python -m pip install -r requirements-dev.txt
+      - name: Static analysis
+        run: python -m ruff check .
       - name: Test
         run: python -m unittest discover -s . -p 'test_*.py' -v
       - name: Build whisper.cpp
@@ -64,14 +74,17 @@ jobs:
           git clone --depth 1 --branch "$WHISPER_CPP_VERSION" https://github.com/ggml-org/whisper.cpp.git build/whisper.cpp
           cmake -S build/whisper.cpp -B build/whisper.cpp/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF
-          cmake --build build/whisper.cpp/build --target whisper-cli
+          cmake --build build/whisper.cpp/build --target whisper-cli whisper-server
       - name: Package Apple Silicon app
         env:
           WHISPER_CLI_BINARY: ${{ github.workspace }}/build/whisper.cpp/build/bin/whisper-cli
+          WHISPER_SERVER_BINARY: ${{ github.workspace }}/build/whisper.cpp/build/bin/whisper-server
         run: |
           export FFMPEG_BINARY="$(python -c 'import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())')"
           file "$FFMPEG_BINARY" | grep -q arm64
           ./scripts/build-release.sh
+      - name: Check packaged helpers
+        run: python scripts/smoke-release.py
       - uses: actions/upload-artifact@v4
         with:
           name: macos-release
@@ -85,23 +98,31 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install build tools
-        run: python -m pip install pyinstaller PyQt6 imageio-ffmpeg pynput
+        run: python -m pip install -r requirements-dev.txt
+      - name: Static analysis
+        run: python -m ruff check .
       - name: Test
         run: python -m unittest discover -s . -p "test_*.py" -v
       - name: Build whisper.cpp
         shell: pwsh
         run: |
           git clone --depth 1 --branch $env:WHISPER_CPP_VERSION https://github.com/ggml-org/whisper.cpp.git build/whisper.cpp
-          cmake -S build/whisper.cpp -B build/whisper.cpp/build -G Ninja `
+          if ($LASTEXITCODE -ne 0) { throw "Clone failed" }
+          cmake -S build/whisper.cpp -B build/whisper.cpp/build -A x64 `
             -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF
-          cmake --build build/whisper.cpp/build --target whisper-cli
+          if ($LASTEXITCODE -ne 0) { throw "CMake configure failed" }
+          cmake --build build/whisper.cpp/build --config Release --target whisper-cli whisper-server
+          if ($LASTEXITCODE -ne 0) { throw "CMake build failed" }
       - name: Package Windows app
         shell: pwsh
         env:
-          WHISPER_CLI_BINARY: ${{ github.workspace }}/build/whisper.cpp/build/bin/whisper-cli.exe
+          WHISPER_CLI_BINARY: ${{ github.workspace }}/build/whisper.cpp/build/bin/Release/whisper-cli.exe
+          WHISPER_SERVER_BINARY: ${{ github.workspace }}/build/whisper.cpp/build/bin/Release/whisper-server.exe
         run: |
           $env:FFMPEG_BINARY = python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"
           ./scripts/build-release.ps1
+      - name: Check packaged helpers
+        run: python scripts/smoke-release.py
       - uses: actions/upload-artifact@v4
         with:
           name: windows-release
@@ -111,6 +132,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [linux, macos, windows]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v5
         with:
